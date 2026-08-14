@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { Button, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -116,6 +117,12 @@ const en = {
   reuseForBoth: 'Use this saved proxy for both providers',
   claudeUsageHelp: 'Claude fallback: enter the used percentage and optional reset time from your plan.',
   saveClaudeUsage: 'Save Claude usage',
+  codexFeatures: 'Codex workflow features',
+  remoteCompaction: 'Remote compaction is automatic for OpenAI OAuth. If the preview endpoint is unavailable, DSH safely falls back to its local summary compaction.',
+  codeReviewHelp: 'Use the Code review button in the composer (or /review) for a dedicated read-only review whose findings stay in chat.',
+  codeReview: 'Code review',
+  codeReviewTitle: 'Review uncommitted changes without modifying files',
+  codeReviewFailed: 'Code review could not start',
 }
 
 const zh: { [Key in keyof typeof en]: string } = {
@@ -130,6 +137,12 @@ const zh: { [Key in keyof typeof en]: string } = {
   reuseForBoth: '將此已儲存代理用於兩個提供者',
   claudeUsageHelp: 'Claude 備援：輸入方案顯示的已用百分比及選用重設時間。',
   saveClaudeUsage: '儲存 Claude 用量',
+  codexFeatures: 'Codex 工作流程功能',
+  remoteCompaction: 'OpenAI OAuth 會自動使用遠端壓縮。若預覽端點無法使用，DSH 會安全地退回本機摘要壓縮。',
+  codeReviewHelp: '使用輸入框中的「程式碼審查」按鈕（或 /review）執行專用唯讀審查，結果會永久保留在聊天中。',
+  codeReview: '程式碼審查',
+  codeReviewTitle: '審查未提交變更，不修改任何檔案',
+  codeReviewFailed: '無法啟動程式碼審查',
 }
 
 type OAuthSettingsKey = keyof typeof en
@@ -622,6 +635,15 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
                     : <Button variant="primary" size="sm" disabled={loading || busy !== undefined || (providerFlow !== undefined && !isTerminal(providerFlow.phase))} onClick={() => { void begin(provider) }}>{isBusy ? format(copy, 'starting') : format(copy, provider.add)}</Button>}
               </div>
               <p style={detail}>{connected === true ? format(copy, 'routeReady') : format(copy, 'routeHidden')}</p>
+              {provider.id === 'codex'
+                ? (
+                    <div style={proxyGrid} data-codex-workflow-features>
+                      <span style={nameStyle}>{format(copy, 'codexFeatures')}</span>
+                      <p style={detail}>{format(copy, 'remoteCompaction')}</p>
+                      <p style={detail}>{format(copy, 'codeReviewHelp')}</p>
+                    </div>
+                  )
+                : null}
               {providerStatus?.accounts.length
                 ? (
                     <div style={accountList}>
@@ -774,7 +796,57 @@ function postJson<T>(provider: ProviderCard, action: string, body: Record<string
   })
 }
 
-export const inject = ['slots', 'locale', 'remote']
+interface ReviewButtonInjected {
+  runReview(): Promise<string | null>
+}
+
+type ReviewButtonProps = PropsRuntime<'conversation.input.left'>
+  & PropsLocale<typeof NS>
+  & InjectFace<ReviewButtonInjected>
+
+function ReviewButton({ input, runReview, t }: ReviewButtonProps): ReactNode {
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
+  const start = (): void => {
+    setRunning(true)
+    setError(null)
+    void runReview().then((failure) => {
+      if (!mounted.current) return
+      setRunning(false)
+      setError(failure)
+    }, (reason: unknown) => {
+      if (!mounted.current) return
+      setRunning(false)
+      setError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={running || input.phase === 'submitting'}
+        title={t('codeReviewTitle')}
+        aria-label={t('codeReviewTitle')}
+        onClick={start}
+      >
+        {t('codeReview')}
+      </Button>
+      {error === null
+        ? null
+        : <span role="status" title={error} style={errorStyle}>{t('codeReviewFailed')}</span>}
+    </span>
+  )
+}
+
+export const inject = ['slots', 'locale', 'remote', 'remote.commands']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'oauth-model-providers: Settings dictionaries')
@@ -840,4 +912,20 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     inject: injected,
   }, OAuthSettingsSection))
+
+  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+    name: 'conversation.input.left',
+    id: 'codex-code-review',
+    order: 35,
+    label: () => ctx.locale.bind(NS)('codeReview'),
+    locale: NS,
+    inject: (sessionId) => ({
+      runReview: async (): Promise<string | null> => {
+        const result = await ctx.remote.commands.execute(sessionId, '/review')
+        if (!result.ok) return `${result.error.message} (${result.error.code})`
+        if (result.value === undefined) return 'Unknown command: /review'
+        return result.value.result.kind === 'error' ? result.value.result.text : null
+      },
+    }),
+  }, ReviewButton))
 }

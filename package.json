@@ -1,7 +1,7 @@
 {
   "name": "dsh-oauth-model-providers",
-  "version": "0.5.1",
-  "description": "OpenAI Codex and Anthropic OAuth model providers with bilingual DeepSeek Harness Settings, proxy support, and automatic model discovery",
+  "version": "0.6.0",
+  "description": "OpenAI Codex and Anthropic OAuth providers for DeepSeek Harness with remote compaction, read-only code review, bilingual Settings, proxy support, and model discovery",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
@@ -38,6 +38,7 @@
       "inject": [
         "@deepseek-ai/dsh-client-connection",
         "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-api-remotes"
       ]
@@ -49,7 +50,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run tests/credential-store.spec.ts tests/routed-provider.spec.ts tests/model-discovery.spec.ts tests/browser-auth.spec.ts tests/proxy.spec.ts",
+    "test": "vitest run tests/credential-store.spec.ts tests/routed-provider.spec.ts tests/remote-compaction.spec.ts tests/code-review.spec.ts tests/model-discovery.spec.ts tests/browser-auth.spec.ts tests/proxy.spec.ts",
     "check": "npm run typecheck && npm run test && npm run build"
   },
   "engines": {
@@ -69,6 +70,7 @@
     "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
@@ -116,6 +118,9 @@
     "@deepseek-ai/dsh-client-runtime": {
       "optional": true
     },
+    "@deepseek-ai/dsh-client-ui-conversation": {
+      "optional": true
+    },
     "@deepseek-ai/dsh-client-ui-primitives": {
       "optional": true
     },
@@ -152,6 +157,7 @@
     "@deepseek-ai/dsh-client-connection": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-locale": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-primitives": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-settings": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.6",

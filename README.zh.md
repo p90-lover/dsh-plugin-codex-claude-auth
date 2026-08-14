@@ -7,6 +7,12 @@
 
 此組合包使用 DeepSeek Harness 的模型路由、同來源設定精靈與持久憑證參照服務。OAuth 登入與更新由 `@earendil-works/pi-ai` 提供。登入後，外掛會取得該帳號由提供者回傳的模型清單，並保留 `pi-ai` 內建清單作為離線或失敗時的備援。
 
+## 0.6.0 新增功能
+
+- OpenAI OAuth 遠端壓縮：使用單次回應的 `/codex/responses/compact` 端點，將回傳的不透明項目原樣保留給下一次請求；若預覽端點無法使用，會退回 DSH 的本機摘要壓縮。
+- Codex 風格唯讀程式碼審查：輸入框提供 **程式碼審查** 按鈕，`/review` 亦支援未提交變更、基準分支、單一提交及自訂條件。
+- 設定卡會以英文及繁體中文說明這兩項工作流程功能。
+
 ## 相容版本
 
 - DeepSeek Harness `0.1.0-rc.6`（`next` 頻道）
@@ -20,7 +26,7 @@ DeepSeek Harness 目前仍是開發者預覽版。請鎖定以上版本，並預
 將打包檔安裝到 Web profile：
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.5.1.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.6.0.tgz
 dsh --profile web
 ```
 
@@ -49,6 +55,21 @@ dsh plugin --profile web add .
 此設定區頂端可切換 English / 繁體中文；此外掛頁面預設使用英文。
 
 舊有的 `/login-openai`、`/login-claude`、`/status-openai` 與 `/status-claude` 指令仍保留作為相容備援，但設定流程不會呼叫它們。
+
+## 遠端壓縮與程式碼審查
+
+當 DSH 現有的自動或手動壓縮使用 OpenAI OAuth 路由時，外掛會把完整 Responses 輸入送到 OpenAI 遠端壓縮端點。回傳的標準輸出會存入 DSH 檢查點，並在下一次請求原樣展開，不會自行裁剪。若端點失敗，同一次壓縮會繼續走 DSH 原有的本機摘要路徑。
+
+按輸入框中的 **程式碼審查**，即可唯讀審查已暫存、未暫存及未追蹤變更，不會修改檔案。等效指令如下：
+
+```text
+/review
+/review base main
+/review commit HEAD~1
+/review custom 僅檢查安全性與資料遺失問題
+```
+
+審查會排入一個專用模型回合。P0-P3 發現，或 `No actionable findings.`，會永久保留在聊天記錄中。
 
 可以在同一個設定頁按 **中斷連線**，或執行 `/logout-openai` 與 `/logout-claude`。登出會移除本機儲存的授權資料，並從模型選擇器隱藏該提供者；它不保證撤銷遠端授權，若有需要，請在提供者帳號中另外撤銷。
 
@@ -103,7 +124,7 @@ pnpm test
 pnpm run build
 ```
 
-聚焦測試涵蓋：不洩漏機密的憑證中繼資料、依序執行的更新操作、重播路由相容性、已驗證模型清單的解析與備援、已儲存憑證的回呼狀態校正、代理網址遮蔽，以及個別提供者的代理串流選項。
+聚焦測試涵蓋：遠端壓縮請求與還原行為、唯讀審查合約、不洩漏機密的憑證中繼資料、依序執行的更新操作、重播路由相容性、已驗證模型清單的解析與備援、已儲存憑證的回呼狀態校正、代理網址遮蔽，以及個別提供者的代理串流選項。
 
 ## 授權條款
 

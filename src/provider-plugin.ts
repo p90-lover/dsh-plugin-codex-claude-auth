@@ -22,6 +22,7 @@ import { ProviderProxySetting, proxyAwareProvider } from './proxy.ts'
 import { AccountRotatingAdapter, ReplayCompatibleAdapter } from './replay-compat.ts'
 import { AccountUsageMonitor } from './account-usage.ts'
 import { routedProvider } from './routed-provider.ts'
+import { openAiRemoteCompactionProvider } from './remote-compaction.ts'
 
 const DIRECTORY_SETTINGS_SCHEMA = z.object({})
 
@@ -61,7 +62,7 @@ export function applyOAuthProvider(
   const backend = credentialBackend(ctx.credentials)
   const proxy = new ProviderProxySetting(backend, config.proxyCredentialRef, config.sharedProxyCredentialRef)
   const provider = proxyAwareProvider(
-    autoModelProvider(baseProvider, spec.modelCatalog),
+    openAiRemoteCompactionProvider(autoModelProvider(baseProvider, spec.modelCatalog)),
     () => proxy.value,
   )
   const store = new HarnessOAuthCredentialStore(

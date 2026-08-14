@@ -7,6 +7,12 @@ An experimental DeepSeek Harness bundle that adds two independent LLM routes:
 
 The bundle uses DeepSeek Harness services for model routing, a same-origin Settings wizard, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`. After sign-in, the plugin fetches the account's provider-owned model catalog and keeps the bundled `pi-ai` catalog as an offline/failure fallback.
 
+## Version 0.6.0 additions
+
+- OpenAI OAuth remote compaction through the unary `/codex/responses/compact` endpoint. The plugin preserves the returned opaque items unchanged for the next request and falls back to DSH's local summary compaction when the preview endpoint is unavailable.
+- A Codex-style, read-only code review workflow with a composer **Code review** button and `/review` scopes for uncommitted changes, a base branch, one commit, or custom criteria.
+- The Settings card describes both workflow features in English and Traditional Chinese.
+
 ## Version 0.5.1 additions
 
 - Multiple OAuth accounts per provider, account selection, live OpenAI usage/reset details, and a configurable Claude usage fallback.
@@ -29,7 +35,7 @@ DeepSeek Harness is currently a developer preview. Pin the versions above and ex
 Install the packed bundle into a Web profile:
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.5.1.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.6.0.tgz
 dsh --profile web
 ```
 
@@ -58,6 +64,21 @@ In Harness Web:
 Use the English / 繁體中文 selector at the top of this section; English is the default for this plugin page.
 
 The legacy `/login-openai`, `/login-claude`, `/status-openai`, and `/status-claude` commands remain available as optional compatibility fallbacks, but the Settings flow does not invoke them.
+
+## Remote compaction and code review
+
+When DSH's existing automatic or manual compaction selects the OpenAI OAuth route, the plugin sends the full Responses input to OpenAI's remote compaction endpoint. Its canonical output is stored inside the DSH checkpoint and expanded back into the next request without pruning. If the endpoint fails, the same compaction attempt continues through DSH's existing local summary path.
+
+Click **Code review** in the composer to review staged, unstaged, and untracked changes without modifying files. The equivalent commands are:
+
+```text
+/review
+/review base main
+/review commit HEAD~1
+/review custom security and data-loss issues only
+```
+
+The review is queued as a dedicated model turn. Its P0-P3 findings, or `No actionable findings.`, remain in the chat transcript.
 
 Use **Disconnect** on the same Settings page, or run `/logout-openai` or `/logout-claude`. Logout removes the locally stored grant and hides that provider from the model picker; it does not promise remote revocation. Revoke the grant in the provider account when that matters.
 
@@ -112,7 +133,7 @@ pnpm test
 pnpm run build
 ```
 
-The focused tests cover secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, proxy URL redaction, and per-provider proxy stream options.
+The focused tests cover remote compaction request/restore behavior, the read-only review contract, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, proxy URL redaction, and per-provider proxy stream options.
 
 ## License
 

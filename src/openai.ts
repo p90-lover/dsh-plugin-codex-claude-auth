@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { oauthProviderConfig } from './config.ts'
 import type { OAuthProviderConfig, OAuthProviderDefaults } from './config.ts'
 import { applyOAuthProvider } from './provider-plugin.ts'
+import { installCodeReview } from './code-review.ts'
 
 const DEFAULTS: OAuthProviderDefaults = {
   route: 'openai-codex-oauth',
@@ -27,4 +28,5 @@ export function apply(ctx: Context, config: Config): void {
     defaults: DEFAULTS,
     createProvider: openaiCodexProvider,
   })
+  installCodeReview(ctx)
 }
