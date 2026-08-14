@@ -5,7 +5,7 @@
 - `openai-codex-oauth` — 以 ChatGPT 訂閱帳號登入並使用 OpenAI Codex 模型。
 - `anthropic-oauth` — 以 Claude Pro/Max 帳號登入並使用 Anthropic Claude 模型。
 
-此組合包使用 DeepSeek Harness 的模型路由、同來源設定精靈與持久憑證參照服務。OAuth 登入與更新由 `@earendil-works/pi-ai` 提供；模型清單也直接取自該套件，而不是在本專案中寫死。
+此組合包使用 DeepSeek Harness 的模型路由、同來源設定精靈與持久憑證參照服務。OAuth 登入與更新由 `@earendil-works/pi-ai` 提供。登入後，外掛會取得該帳號由提供者回傳的模型清單，並保留 `pi-ai` 內建清單作為離線或失敗時的備援。
 
 ## 相容版本
 
@@ -20,7 +20,7 @@ DeepSeek Harness 目前仍是開發者預覽版。請鎖定以上版本，並預
 將打包檔安裝到 Web profile：
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.3.3.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.5.1.tgz
 dsh --profile web
 ```
 
@@ -44,7 +44,7 @@ dsh plugin --profile web add .
 2. 可選擇為個別提供者設定 HTTP(S) 代理伺服器。機密網址只會寫入 Harness 憑證儲存區。
 3. 點選 **新增 Codex OAuth** 或 **新增 Claude OAuth**，直接在提供者卡片內完成步驟；不需要指令、聊天或 Harness 提問浮層。
 4. 開啟提供者登入頁。卡片會輪詢主機端流程，並自動偵測本機 OAuth 回呼（Codex 使用 `localhost:1455`，Claude 使用 `localhost:53692`）。仍可在失敗時手動貼上返回網址或授權碼。
-5. 登入成功後，提供者會出現在 **設定 → 模型**，其模型也會自動出現在模型選擇器。
+5. 登入成功後，提供者會出現在 **設定 → 模型**。外掛會自動更新該帳號可用的模型，並重新整理模型選擇器。
 
 此設定區頂端可切換 English / 繁體中文；此外掛頁面預設使用英文。
 
@@ -71,33 +71,17 @@ dsh plugin --profile web add .
 
 外部登入網站是由瀏覽器開啟，因此該頁面仍使用瀏覽器本身的代理／網路設定。外掛代理只涵蓋 DSH 主機流量，不會暗中變更瀏覽器或 Windows 設定。
 
+## 自動取得模型清單
+
+OpenAI Codex 會讀取已驗證的 ChatGPT Codex 模型清單；Anthropic 會讀取已驗證的 Models API，並在回應提供時套用能力與 token 上限資料。清單請求會使用與該提供者 OAuth 及模型推論相同的個別代理。
+
+若遠端清單無法連線、逾時或回應無效，外掛會保留最後已知的清單；全新啟動時則使用 `pi-ai` 內建模型。模型清單更新失敗不會移除已連線的提供者。
+
 ## 設定
 
-插入的 Cordis 列 id 為 `llm-openai-codex-oauth` 與 `llm-anthropic-oauth`。profile patch 可以取代其中任一列的設定。DeepSeek Harness 依 id 套用 patch 時會取代整份 config，因此所有想保留的非預設值都要重新列出。
+插入的 Cordis 列 id 為 `llm-openai-codex-oauth` 與 `llm-anthropic-oauth`。profile patch 可以取代其中任一列的設定。DeepSeek Harness 依 id 套用 patch 時會取代整份 config，因此所有想保留的非預設值都要重新列出。請從 [`config/examples/oauth-providers.example.yml`](config/examples/oauth-providers.example.yml) 開始設定。
 
-```yaml
-- id: llm-openai-codex-oauth
-  config:
-    route: openai-codex-oauth
-    displayName: OpenAI Codex (OAuth)
-    credentialRef: DSH_OPENAI_CODEX_OAUTH
-    proxyCredentialRef: DSH_OPENAI_CODEX_PROXY
-    loginCommand: login-openai
-    statusCommand: status-openai
-    logoutCommand: logout-openai
-    streamIdleTimeoutMs: 300000
-
-- id: llm-anthropic-oauth
-  config:
-    route: anthropic-oauth
-    displayName: Anthropic Claude (OAuth)
-    credentialRef: DSH_ANTHROPIC_OAUTH
-    proxyCredentialRef: DSH_ANTHROPIC_PROXY
-    loginCommand: login-claude
-    statusCommand: status-claude
-    logoutCommand: logout-claude
-    streamIdleTimeoutMs: 300000
-```
+執行階段設定刻意與原始碼版本控制分開。請將本機覆寫放在 `config/runtime/`，或命名為 `config/*.local.yml`；兩者都已忽略。OAuth 憑證、代理網址、已填入資料的 profile 與回呼網址必須只留在 Harness 的憑證／profile 儲存區，絕對不可複製進此儲存庫。已追蹤的 `cordis.patch.yml` 只是 DSH 打包所需且不含機密的組合清單。
 
 可選的傳輸控制欄位為 `transport`、`timeoutMs`、`websocketConnectTimeoutMs` 與 `retryPolicy`，其行為與 `dsh-llm-pi-ai` 相同。
 
@@ -107,6 +91,7 @@ dsh plugin --profile web add .
 - 此處的 Anthropic OAuth 針對 Claude 程式開發工具所用的 Claude Pro/Max 流程，並非 Anthropic API key 路由。
 - 這些消費者 OAuth 流程並未被文件化為穩定、通用的第三方整合合約；提供者政策或通訊協定變更都可能使其失效。使用前請確認適用的提供者條款；正式環境整合建議使用官方 API 憑證。
 - 更新序列化只限單一程序。請勿讓多個 Harness 程序共用同一個 OAuth 憑證參照，否則輪替 refresh token 時可能跨程序競爭。
+- 遠端模型清單是提供者回傳的建議資料；無法完成更新時，仍會保留內建清單作為安全備援。
 - 測試套件刻意不自動操作真實帳號登入。請在自己的 profile 內互動完成每個登入流程，並實際驗證一次模型請求。
 - 代理設定檢查成功不等於模型請求已完成；OAuth 成功後仍應驗證一次真實模型請求。
 
@@ -118,4 +103,8 @@ pnpm test
 pnpm run build
 ```
 
-聚焦測試涵蓋：不洩漏機密的憑證中繼資料、依序執行的更新操作、上游路由識別、已儲存憑證的回呼狀態校正、代理網址遮蔽，以及個別提供者的代理串流選項。
+聚焦測試涵蓋：不洩漏機密的憑證中繼資料、依序執行的更新操作、重播路由相容性、已驗證模型清單的解析與備援、已儲存憑證的回呼狀態校正、代理網址遮蔽，以及個別提供者的代理串流選項。
+
+## 授權條款
+
+本專案依 [PolyForm Noncommercial License 1.0.0](LICENSE) 以 source-available 方式提供。該授權不允許商業用途或預期將用於商業的用途，且不是 OSI 認可的開放原始碼授權。

@@ -119,8 +119,16 @@ export function proxyAwareProvider(base: Provider, getProxy: () => string | unde
                 () => oauth.refresh(credential, signal),
               ),
             },
-          },
+        },
     },
+    ...base.refreshModels === undefined
+      ? {}
+      : {
+          refreshModels: context => withProviderProxy(
+            getProxy(),
+            () => base.refreshModels!(context),
+          ),
+        },
     stream: (model, context, options) => {
       const proxy = getProxy()
       return withProviderProxy(
@@ -140,16 +148,18 @@ export function proxyAwareProvider(base: Provider, getProxy: () => string | unde
 
 /** Secret-backed live proxy setting shared by OAuth and model dispatch. */
 export class ProviderProxySetting {
-  private current: string | undefined
+  private providerCurrent: string | undefined
+  private sharedCurrent: string | undefined
   private loading: Promise<void> | undefined
 
   constructor(
     private readonly backend: HarnessCredentialBackend,
     readonly ref: CredentialRef,
+    readonly sharedRef: CredentialRef,
   ) {}
 
   get value(): string | undefined {
-    return this.current
+    return this.sharedCurrent ?? this.providerCurrent
   }
 
   async refresh(): Promise<void> {
@@ -163,24 +173,58 @@ export class ProviderProxySetting {
   }
 
   private async read(): Promise<void> {
-    const resolved = await this.backend.resolve(this.ref)
-    this.current = resolved === undefined ? undefined : normalizeProxyUrl(resolved.value)
+    const [provider, shared] = await Promise.all([
+      this.backend.resolve(this.ref),
+      this.backend.resolve(this.sharedRef),
+    ])
+    this.providerCurrent = provider === undefined ? undefined : normalizeProxyUrl(provider.value)
+    this.sharedCurrent = shared === undefined ? undefined : normalizeProxyUrl(shared.value)
   }
 
   async set(value: string): Promise<void> {
     const normalized = normalizeProxyUrl(value)
     await this.backend.set(this.ref, normalized)
-    this.current = normalized
+    this.providerCurrent = normalized
   }
 
   async unset(): Promise<void> {
     await this.backend.unset(this.ref)
-    this.current = undefined
+    this.providerCurrent = undefined
   }
 
-  describe(): { configured: boolean; display?: string } {
-    return this.current === undefined
-      ? { configured: false }
-      : { configured: true, display: proxyDisplayName(this.current) }
+  async setShared(value: string): Promise<void> {
+    const normalized = normalizeProxyUrl(value)
+    await this.backend.set(this.sharedRef, normalized)
+    this.sharedCurrent = normalized
+  }
+
+  async unsetShared(): Promise<void> {
+    await this.backend.unset(this.sharedRef)
+    this.sharedCurrent = undefined
+  }
+
+  /** Copy a provider-only secret to the shared ref without exposing it to the client. */
+  async promoteToShared(): Promise<void> {
+    await this.refresh()
+    if (this.providerCurrent === undefined) throw new Error('No provider proxy is saved to reuse.')
+    await this.backend.set(this.sharedRef, this.providerCurrent)
+    this.sharedCurrent = this.providerCurrent
+  }
+
+  describe(): {
+    configured: boolean
+    display?: string
+    source?: 'shared' | 'provider'
+    providerConfigured: boolean
+    sharedConfigured: boolean
+  } {
+    const value = this.value
+    return {
+      configured: value !== undefined,
+      ...(value === undefined ? {} : { display: proxyDisplayName(value) }),
+      ...(this.sharedCurrent !== undefined ? { source: 'shared' as const } : this.providerCurrent !== undefined ? { source: 'provider' as const } : {}),
+      providerConfigured: this.providerCurrent !== undefined,
+      sharedConfigured: this.sharedCurrent !== undefined,
+    }
   }
 }

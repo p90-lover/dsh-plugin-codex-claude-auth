@@ -1,7 +1,13 @@
 node_modules/
+aiTemp/
 lib/
 *.tgz
 .env
 .env.*
 .credentials.yaml
-aiTemp/
+.dsh/
+config/runtime/
+config/*.local.yml
+config/*.local.yaml
+*.credentials.yml
+*.credentials.yaml

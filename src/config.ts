@@ -26,6 +26,8 @@ export interface OAuthProviderConfig {
   displayName?: string
   credentialRef?: string
   proxyCredentialRef?: string
+  /** Shared proxy used by both OAuth provider instances. */
+  sharedProxyCredentialRef?: string
   loginCommand?: string
   statusCommand?: string
   logoutCommand?: string
@@ -42,6 +44,7 @@ export interface ResolvedOAuthProviderConfig {
   displayName: string
   credentialRef: CredentialRef
   proxyCredentialRef: CredentialRef
+  sharedProxyCredentialRef: CredentialRef
   loginCommand: string
   statusCommand: string
   logoutCommand: string
@@ -59,6 +62,7 @@ export function oauthProviderConfig(defaults: OAuthProviderDefaults): z<OAuthPro
     displayName: z.string().default(defaults.displayName),
     credentialRef: z.string().role('credential-ref').default(defaults.credentialRef),
     proxyCredentialRef: z.string().role('credential-ref').default(defaults.proxyCredentialRef),
+    sharedProxyCredentialRef: z.string().role('credential-ref').default('DSH_OAUTH_SHARED_PROXY'),
     loginCommand: z.string().default(defaults.loginCommand),
     statusCommand: z.string().default(defaults.statusCommand),
     logoutCommand: z.string().default(defaults.logoutCommand),
@@ -100,8 +104,16 @@ export function resolveOAuthProviderConfig(
     defaults.proxyCredentialRef,
     'proxyCredentialRef',
   )
+  const sharedProxyCredentialName = required(
+    source.sharedProxyCredentialRef,
+    'DSH_OAUTH_SHARED_PROXY',
+    'sharedProxyCredentialRef',
+  )
   if (credentialName === proxyCredentialName) {
     throw new Error('oauth-model-provider: credentialRef and proxyCredentialRef must be distinct')
+  }
+  if (credentialName === sharedProxyCredentialName) {
+    throw new Error('oauth-model-provider: credentialRef and sharedProxyCredentialRef must be distinct')
   }
   const streamIdleTimeoutMs = source.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS
   if (!Number.isFinite(streamIdleTimeoutMs)
@@ -122,6 +134,7 @@ export function resolveOAuthProviderConfig(
     displayName,
     credentialRef: credentialRef(credentialName),
     proxyCredentialRef: credentialRef(proxyCredentialName),
+    sharedProxyCredentialRef: credentialRef(sharedProxyCredentialName),
     loginCommand,
     statusCommand,
     logoutCommand,

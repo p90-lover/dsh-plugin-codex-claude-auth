@@ -16,7 +16,11 @@ import { resolveOAuthProviderConfig } from './config.ts'
 import { credentialBackend, HarnessOAuthCredentialStore } from './credential-store.ts'
 import { installOAuthCommands } from './commands.ts'
 import { installBrowserOAuth } from './browser-auth.ts'
+import { autoModelProvider } from './model-discovery.ts'
+import type { OAuthModelCatalog } from './model-discovery.ts'
 import { ProviderProxySetting, proxyAwareProvider } from './proxy.ts'
+import { AccountRotatingAdapter, ReplayCompatibleAdapter } from './replay-compat.ts'
+import { AccountUsageMonitor } from './account-usage.ts'
 import { routedProvider } from './routed-provider.ts'
 
 const DIRECTORY_SETTINGS_SCHEMA = z.object({})
@@ -24,6 +28,7 @@ const DIRECTORY_SETTINGS_SCHEMA = z.object({})
 /** Provider facts fixed by one exported plugin entry point. */
 export interface OAuthProviderSpec {
   authProviderId: string
+  modelCatalog: OAuthModelCatalog
   defaults: OAuthProviderDefaults
   createProvider(): Provider
 }
@@ -54,14 +59,18 @@ export function applyOAuthProvider(
   }
 
   const backend = credentialBackend(ctx.credentials)
-  const proxy = new ProviderProxySetting(backend, config.proxyCredentialRef)
-  const provider = proxyAwareProvider(baseProvider, () => proxy.value)
+  const proxy = new ProviderProxySetting(backend, config.proxyCredentialRef, config.sharedProxyCredentialRef)
+  const provider = proxyAwareProvider(
+    autoModelProvider(baseProvider, spec.modelCatalog),
+    () => proxy.value,
+  )
   const store = new HarnessOAuthCredentialStore(
     backend,
     new Map([[spec.authProviderId, config.credentialRef]]),
   )
   const authModels: MutableModels = createModels({ credentials: store })
   authModels.setProvider(provider)
+  const usage = new AccountUsageMonitor(spec.authProviderId, store, () => proxy.value)
 
   const routeProvider = routedProvider(provider, config.route, config.displayName)
   const profile: ResolvedPiAiProviderProfile = {
@@ -78,10 +87,24 @@ export function applyOAuthProvider(
       : { websocketConnectTimeoutMs: config.websocketConnectTimeoutMs },
   }
   const profiles = new Map([[config.route, profile]])
-  const adapter = new PiAiAdapter({
-    profiles: () => profiles,
-    resolveApiKey: async () => accessToken((await authModels.getAuth(spec.authProviderId))?.auth, config.displayName),
-    resolveAttachments: () => ctx.get('attachments'),
+  const baseAdapter = new ReplayCompatibleAdapter(
+    new PiAiAdapter({
+      profiles: () => profiles,
+      resolveApiKey: async () => accessToken(
+        (await authModels.getAuth(spec.authProviderId))?.auth,
+        config.displayName,
+      ),
+      resolveAttachments: () => ctx.get('attachments'),
+    }),
+    config.route,
+    spec.authProviderId,
+  )
+  const adapter = new AccountRotatingAdapter(baseAdapter, async () => {
+    const reset = await usage.consumeActiveResetCredit()
+    if (reset !== undefined) return { kind: 'reset' as const, from: reset, to: reset }
+    const switched = await store.rotateNext(spec.authProviderId)
+    if (switched !== undefined) usage.invalidate()
+    return switched
   })
 
   const registration = ctx.llm.registerAdapter([config.route], adapter)
@@ -123,14 +146,45 @@ export function applyOAuthProvider(
     }
   }
 
+  let refreshingModels: Promise<void> | undefined
+  const refreshModels = (force = false): Promise<void> => {
+    if (refreshingModels !== undefined) return refreshingModels
+    const task = (async () => {
+      try {
+        const result = await authModels.refresh({ allowNetwork: true, force })
+        const error = result.errors.get(spec.authProviderId)
+        if (error !== undefined) {
+          ctx.logger.warn(
+            `oauth-model-provider: ${config.displayName} remote model discovery failed; keeping the last known catalog`,
+          )
+          ctx.logger.warn(error)
+        }
+        if (routeAvailable) registration.replace([config.route])
+      } catch (error) {
+        ctx.logger.warn(
+          `oauth-model-provider: could not publish the refreshed ${config.displayName} model catalog`,
+        )
+        ctx.logger.warn(error)
+      }
+    })()
+    refreshingModels = task
+    const clear = (): void => {
+      if (refreshingModels === task) refreshingModels = undefined
+    }
+    void task.then(clear, clear)
+    return task
+  }
+
   ctx.effect(() => {
     let live = true
     const bootstrapRevision = availabilityRevision
     void Promise.all([
       store.read(spec.authProviderId),
       proxy.refresh().then(() => undefined),
-    ]).then(([stored]) => {
-      if (live && availabilityRevision === bootstrapRevision && stored?.type === 'oauth') setAvailable(true)
+    ]).then(async ([stored]) => {
+      if (!live || availabilityRevision !== bootstrapRevision || stored?.type !== 'oauth') return
+      setAvailable(true)
+      await refreshModels()
     }, (error) => {
       if (!live) return
       ctx.logger.warn(`oauth-model-provider: could not read initial ${config.displayName} OAuth/proxy state`)
@@ -140,16 +194,22 @@ export function applyOAuthProvider(
   }, `oauth-model-provider: initial ${config.route} credential/proxy state`)
 
   ctx.on('credentials/updated', (ref) => {
-    if (ref === config.proxyCredentialRef) {
-      void proxy.refresh().catch((error: unknown) => {
-        ctx.logger.warn(`oauth-model-provider: could not refresh ${config.displayName} proxy state`)
+    if (ref === config.proxyCredentialRef || ref === config.sharedProxyCredentialRef) {
+      void proxy.refresh().then(
+        () => routeAvailable ? refreshModels(true) : undefined,
+      ).catch((error: unknown) => {
+        ctx.logger.warn(`oauth-model-provider: could not refresh ${config.displayName} proxy/model state`)
         ctx.logger.warn(error)
       })
       return
     }
     if (ref !== config.credentialRef) return
     void store.read(spec.authProviderId).then(
-      stored => { setAvailable(stored?.type === 'oauth') },
+      async stored => {
+        const available = stored?.type === 'oauth'
+        setAvailable(available)
+        if (available) await refreshModels(true)
+      },
       (error: unknown) => {
         ctx.logger.warn(`oauth-model-provider: could not refresh ${config.displayName} OAuth state`)
         ctx.logger.warn(error)
@@ -162,6 +222,7 @@ export function applyOAuthProvider(
     authModels,
     store,
     proxy,
+    usage,
     spec.authProviderId,
     config.displayName,
     config.route,

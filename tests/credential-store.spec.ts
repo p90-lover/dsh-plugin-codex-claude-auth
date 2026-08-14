@@ -65,4 +65,23 @@ describe('HarnessOAuthCredentialStore', () => {
     const stored = await store.read('anthropic')
     expect(stored?.type === 'oauth' ? stored.generation : undefined).toBe(2)
   })
+
+  it('migrates a single credential and keeps multiple OAuth accounts independently selectable', async () => {
+    const backend = memoryBackend()
+    backend.values.set('TEST_OAUTH', JSON.stringify({
+      type: 'oauth', access: 'access-one', refresh: 'refresh-one', expires: 1,
+    }))
+    const store = new HarnessOAuthCredentialStore(backend, new Map([['openai-codex', ref('TEST_OAUTH')]]))
+    const finish = store.beginEnrollment('openai-codex')
+    await store.modify('openai-codex', async () => ({
+      type: 'oauth', access: 'access-two', refresh: 'refresh-two', expires: 2,
+    }))
+    finish()
+
+    const accounts = await store.accounts('openai-codex')
+    expect(accounts).toHaveLength(2)
+    expect(accounts.filter(account => account.active)).toHaveLength(1)
+    await store.select('openai-codex', accounts[0]!.id)
+    expect((await store.read('openai-codex') as { access?: string }).access).toBe('access-one')
+  })
 })

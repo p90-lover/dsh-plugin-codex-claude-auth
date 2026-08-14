@@ -9,6 +9,8 @@ import type {
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { HarnessOAuthCredentialStore } from './credential-store.ts'
+import type { PublicAccountWithUsage } from './account-usage.ts'
+import type { AccountUsageMonitor } from './account-usage.ts'
 import type { ProviderProxySetting } from './proxy.ts'
 
 const BODY_LIMIT_BYTES = 16 * 1024
@@ -51,7 +53,14 @@ export interface BrowserOAuthState {
 
 export interface BrowserOAuthStatus {
   connected: boolean
-  proxy: { configured: boolean; display?: string }
+  accounts: readonly PublicAccountWithUsage[]
+  proxy: {
+    configured: boolean
+    display?: string
+    source?: 'shared' | 'provider'
+    providerConfigured: boolean
+    sharedConfigured: boolean
+  }
 }
 
 interface BrowserOAuthChange {
@@ -376,6 +385,7 @@ export class BrowserOAuthController {
     private readonly models: Models,
     private readonly store: HarnessOAuthCredentialStore,
     private readonly proxy: ProviderProxySetting,
+    private readonly usage: AccountUsageMonitor,
     private readonly authProviderId: string,
     private readonly providerName: string,
     private readonly setAvailable: (available: boolean) => void,
@@ -386,11 +396,11 @@ export class BrowserOAuthController {
     const stored = await this.store.read(this.authProviderId)
     const connected = stored?.type === 'oauth'
     if (connected) {
-      this.active?.reconcileConnected()
       this.setAvailable(true)
     }
     return {
       connected,
+      accounts: await this.usage.read(),
       proxy: this.proxy.describe(),
     }
   }
@@ -400,20 +410,21 @@ export class BrowserOAuthController {
     this.active?.cancel()
     const flow = new BrowserOAuthFlow(this.providerName)
     this.active = flow
+    const finishEnrollment = this.store.beginEnrollment(this.authProviderId)
     flow.start(async interaction => {
+      try {
       await this.models.login(this.authProviderId, 'oauth', interaction)
-      this.setAvailable(true)
+        this.usage.invalidate()
+        this.setAvailable(true)
+      } finally {
+        finishEnrollment()
+      }
     })
     return flow.snapshot()
   }
 
   async state(id: string): Promise<BrowserOAuthState> {
     if (this.active?.id !== id) throw new HttpError(404, 'OAuth flow not found.')
-    const stored = await this.store.read(this.authProviderId)
-    if (stored?.type === 'oauth') {
-      this.active.reconcileConnected()
-      this.setAvailable(true)
-    }
     return this.active.snapshot()
   }
 
@@ -430,16 +441,80 @@ export class BrowserOAuthController {
   async logout(): Promise<BrowserOAuthStatus> {
     this.active?.cancel()
     await this.models.logout(this.authProviderId)
+    this.usage.invalidate()
     this.setAvailable(false)
     return this.status()
   }
 
-  async configureProxy(value: string | null): Promise<BrowserOAuthStatus> {
+  async configureProxy(value: string | null, scope: 'provider' | 'shared'): Promise<BrowserOAuthStatus> {
     if (this.active !== undefined && !this.active.isTerminal()) {
       throw new HttpError(409, 'Cancel the active sign-in before changing the proxy.')
     }
-    if (value === null) await this.proxy.unset()
+    if (scope === 'shared') {
+      if (value === null) await this.proxy.unsetShared()
+      else await this.proxy.setShared(value)
+    } else if (value === null) await this.proxy.unset()
     else await this.proxy.set(value)
+    return this.status()
+  }
+
+  async promoteProxy(): Promise<BrowserOAuthStatus> {
+    if (this.active !== undefined && !this.active.isTerminal()) {
+      throw new HttpError(409, 'Cancel the active sign-in before changing the proxy.')
+    }
+    await this.proxy.promoteToShared()
+    return this.status()
+  }
+
+  async refreshSession(): Promise<BrowserOAuthStatus> {
+    this.active?.cancel()
+    this.active = undefined
+    await this.proxy.refresh()
+    const stored = await this.store.read(this.authProviderId)
+    if (stored?.type !== 'oauth') {
+      this.setAvailable(false)
+      return this.status()
+    }
+    await this.models.getAuth(this.authProviderId)
+    await this.models.refresh({ allowNetwork: true, force: true })
+    this.setAvailable(true)
+    return this.status()
+  }
+
+  async selectAccount(accountId: string): Promise<BrowserOAuthStatus> {
+    this.active?.cancel()
+    this.active = undefined
+    await this.store.select(this.authProviderId, accountId)
+    this.usage.invalidate()
+    await this.models.refresh({ allowNetwork: true, force: true })
+    this.setAvailable(true)
+    return this.status()
+  }
+
+  async configureResetCredit(accountId: string, enabled: boolean): Promise<BrowserOAuthStatus> {
+    if (this.authProviderId !== 'openai-codex') {
+      throw new HttpError(400, 'Reset credits are available only for OpenAI Codex accounts.')
+    }
+    await this.store.setUseResetCredit(this.authProviderId, accountId, enabled)
+    this.usage.invalidate()
+    return this.status()
+  }
+
+  async configureUsage(accountId: string, usedPercent: number, resetsAt?: number): Promise<BrowserOAuthStatus> {
+    if (this.authProviderId !== 'anthropic') {
+      throw new HttpError(400, 'Configured usage fallback is available only for Claude accounts.')
+    }
+    if (!Number.isFinite(usedPercent) || usedPercent < 0 || usedPercent > 100) {
+      throw new HttpError(400, 'usedPercent must be between 0 and 100.')
+    }
+    if (resetsAt !== undefined && (!Number.isFinite(resetsAt) || resetsAt <= 0)) {
+      throw new HttpError(400, 'resetsAt must be a Unix timestamp in seconds.')
+    }
+    await this.store.setConfiguredUsage(this.authProviderId, accountId, {
+      usedPercent,
+      ...(resetsAt === undefined ? {} : { resetsAt }),
+    })
+    this.usage.invalidate()
     return this.status()
   }
 
@@ -460,6 +535,7 @@ export function installBrowserOAuth(
   models: Models,
   store: HarnessOAuthCredentialStore,
   proxy: ProviderProxySetting,
+  usage: AccountUsageMonitor,
   authProviderId: string,
   providerName: string,
   route: string,
@@ -471,6 +547,7 @@ export function installBrowserOAuth(
       models,
       store,
       proxy,
+      usage,
       authProviderId,
       providerName,
       setAvailable,
@@ -517,12 +594,45 @@ export function installBrowserOAuth(
               sendJson(res, 200, await controller.logout())
               return
             }
+            if (action === '/refresh') {
+              sendJson(res, 200, await controller.refreshSession())
+              return
+            }
+            if (action === '/account/select') {
+              sendJson(res, 200, await controller.selectAccount(requiredString(body, 'accountId')))
+              return
+            }
+            if (action === '/account/reset-credit') {
+              if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be a boolean.')
+              sendJson(res, 200, await controller.configureResetCredit(
+                requiredString(body, 'accountId'),
+                body.enabled,
+              ))
+              return
+            }
+            if (action === '/account/usage-config') {
+              if (typeof body.usedPercent !== 'number') throw new HttpError(400, 'usedPercent must be a number.')
+              if (body.resetsAt !== undefined && typeof body.resetsAt !== 'number') {
+                throw new HttpError(400, 'resetsAt must be a number when provided.')
+              }
+              sendJson(res, 200, await controller.configureUsage(
+                requiredString(body, 'accountId'),
+                body.usedPercent,
+                body.resetsAt,
+              ))
+              return
+            }
             if (action === '/proxy') {
               const value = body.value
               if (value !== null && typeof value !== 'string') {
                 throw new HttpError(400, 'value must be a proxy URL or null.')
               }
-              sendJson(res, 200, await controller.configureProxy(value))
+              const scope = body.scope === 'shared' ? 'shared' : 'provider'
+              sendJson(res, 200, await controller.configureProxy(value, scope))
+              return
+            }
+            if (action === '/proxy/promote') {
+              sendJson(res, 200, await controller.promoteProxy())
               return
             }
             throw new HttpError(404, 'OAuth action not found.')

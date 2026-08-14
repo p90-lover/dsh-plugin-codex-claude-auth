@@ -6,7 +6,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { Button, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 
-const en = {
+const enBase = {
   nav: 'OAuth Providers',
   title: 'Add Codex or Claude OAuth',
   intro: 'Sign in entirely from this Settings page. No command or chat session is required.',
@@ -55,7 +55,7 @@ const en = {
   cancelled: 'Sign-in cancelled.',
 }
 
-const zh: { [Key in keyof typeof en]: string } = {
+const zhBase: { [Key in keyof typeof enBase]: string } = {
   nav: 'OAuth 提供者',
   title: '新增 Codex 或 Claude OAuth',
   intro: '直接在此設定頁完成登入，不需要指令或聊天工作階段。',
@@ -104,14 +104,66 @@ const zh: { [Key in keyof typeof en]: string } = {
   cancelled: '登入已取消。',
 }
 
+const en = {
+  ...enBase,
+  accounts: 'Accounts', activeAccount: 'Active', useAccount: 'Use account',
+  refreshSession: 'Refresh provider session', refreshUsage: 'Refresh usage',
+  usageUnavailable: 'Usage unavailable', usageDetails: '{used}% used · {remaining}% left · resets {reset}',
+  resetCredits: '{count} reset credit(s)',
+  useResetCredit: 'Use an earned reset credit when this account is exhausted',
+  sharedProxy: 'Both providers (shared)', codexProxy: 'Codex only', claudeProxy: 'Claude only',
+  proxyScope: 'Apply proxy to', sharedProxySource: 'Shared proxy', providerProxySource: 'Provider-only proxy',
+  reuseForBoth: 'Use this saved proxy for both providers',
+  claudeUsageHelp: 'Claude fallback: enter the used percentage and optional reset time from your plan.',
+  saveClaudeUsage: 'Save Claude usage',
+}
+
+const zh: { [Key in keyof typeof en]: string } = {
+  ...zhBase,
+  accounts: '帳戶', activeAccount: '使用中', useAccount: '使用此帳戶',
+  refreshSession: '重新整理提供者工作階段', refreshUsage: '重新整理用量',
+  usageUnavailable: '無法取得用量', usageDetails: '已用 {used}% · 剩餘 {remaining}% · {reset} 重設',
+  resetCredits: '{count} 個重設額度',
+  useResetCredit: '此帳戶用量耗盡時使用已取得的重設額度',
+  sharedProxy: '兩個提供者（共用）', codexProxy: '僅 Codex', claudeProxy: '僅 Claude',
+  proxyScope: '套用代理至', sharedProxySource: '共用代理', providerProxySource: '提供者專用代理',
+  reuseForBoth: '將此已儲存代理用於兩個提供者',
+  claudeUsageHelp: 'Claude 備援：輸入方案顯示的已用百分比及選用重設時間。',
+  saveClaudeUsage: '儲存 Claude 用量',
+}
+
 type OAuthSettingsKey = keyof typeof en
 type ProviderId = 'codex' | 'claude'
+type ProxyScope = 'shared' | ProviderId
 type Language = 'en' | 'zh-TW'
 type Phase = 'starting' | 'input' | 'authorizing' | 'device_code' | 'complete' | 'error' | 'cancelled'
 
 interface ProviderStatus {
   connected: boolean
-  proxy: { configured: boolean; display?: string }
+  accounts: readonly OAuthAccount[]
+  proxy: {
+    configured: boolean
+    display?: string
+    source?: 'shared' | 'provider'
+    providerConfigured: boolean
+    sharedConfigured: boolean
+  }
+}
+
+interface OAuthAccount {
+  id: string
+  label: string
+  active: boolean
+  useResetCredit: boolean
+  configuredUsage?: { usedPercent: number; resetsAt?: number }
+  usage: {
+    usedPercent?: number
+    remainingPercent?: number
+    resetsAt?: number
+    resetCredits?: number
+    source: 'openai-live' | 'configured' | 'unavailable'
+    error?: string
+  }
 }
 
 interface FlowPrompt {
@@ -147,11 +199,6 @@ interface ProviderCard {
   proxyRef: string
 }
 
-interface ActiveFlow {
-  provider: ProviderId
-  state: FlowState
-}
-
 interface SettingsInjected {
   describe: () => Promise<Record<ProviderId, ProviderStatus>>
   start: (provider: ProviderCard) => Promise<FlowState>
@@ -159,7 +206,12 @@ interface SettingsInjected {
   respond: (provider: ProviderCard, flowId: string, promptId: string, value: string) => Promise<FlowState>
   cancel: (provider: ProviderCard, flowId: string) => Promise<FlowState>
   logout: (provider: ProviderCard) => Promise<ProviderStatus>
-  configureProxy: (provider: ProviderCard, value: string | null) => Promise<ProviderStatus>
+  configureProxy: (provider: ProviderCard, value: string | null, scope: 'provider' | 'shared') => Promise<ProviderStatus>
+  promoteProxy: (provider: ProviderCard) => Promise<ProviderStatus>
+  refreshSession: (provider: ProviderCard) => Promise<ProviderStatus>
+  selectAccount: (provider: ProviderCard, accountId: string) => Promise<ProviderStatus>
+  configureResetCredit: (provider: ProviderCard, accountId: string, enabled: boolean) => Promise<ProviderStatus>
+  configureUsage: (provider: ProviderCard, accountId: string, usedPercent: number, resetsAt?: number) => Promise<ProviderStatus>
   subscribe: (listener: () => void) => () => void
 }
 
@@ -206,6 +258,17 @@ const errorStyle: CSSProperties = { margin: 0, fontSize: 12, lineHeight: '18px',
 const successStyle: CSSProperties = { margin: 0, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-state-success-primary)' }
 const codeStyle: CSSProperties = { display: 'inline-block', padding: '7px 10px', borderRadius: 8, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: 16, letterSpacing: 2, background: 'var(--dsw-alias-bg-base)' }
 const actionRow: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }
+const accountList: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: 10, borderRadius: 10, background: 'var(--dsw-alias-bg-module-platform)' }
+const accountRow: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }
+
+function usageCircle(percent: number): CSSProperties {
+  const safe = Math.max(0, Math.min(100, percent))
+  return {
+    width: 24, height: 24, borderRadius: '50%', flex: '0 0 24px',
+    background: `conic-gradient(var(--dsw-alias-state-success-primary) ${safe}%, var(--dsw-alias-border-l2) 0)`,
+    mask: 'radial-gradient(circle at center, transparent 52%, black 54%)',
+  }
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -338,6 +401,11 @@ function OAuthSettingsSection(props: SettingsProps): ReactNode {
     || typeof candidate.cancel !== 'function'
     || typeof candidate.logout !== 'function'
     || typeof candidate.configureProxy !== 'function'
+    || typeof candidate.promoteProxy !== 'function'
+    || typeof candidate.refreshSession !== 'function'
+    || typeof candidate.selectAccount !== 'function'
+    || typeof candidate.configureResetCredit !== 'function'
+    || typeof candidate.configureUsage !== 'function'
     || typeof candidate.subscribe !== 'function') {
     return (
       <section style={page} aria-busy="true" aria-live="polite">
@@ -349,15 +417,20 @@ function OAuthSettingsSection(props: SettingsProps): ReactNode {
 }
 
 function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
-  const { describe, start, flow, respond, cancel, logout, configureProxy, subscribe } = props
+  const {
+    describe, start, flow, respond, cancel, logout, configureProxy, promoteProxy,
+    refreshSession, selectAccount, configureResetCredit, subscribe,
+    configureUsage,
+  } = props
   const [language, setLanguage] = useState<Language>(loadLanguage)
   const copy = language === 'zh-TW' ? zh : en
   const [statuses, setStatuses] = useState<Record<ProviderId, ProviderStatus>>()
   const [loadError, setLoadError] = useState<string>()
   const [busy, setBusy] = useState<ProviderId>()
-  const [active, setActive] = useState<ActiveFlow>()
-  const [manualValue, setManualValue] = useState('')
+  const [active, setActive] = useState<Partial<Record<ProviderId, FlowState>>>({})
+  const [manualValues, setManualValues] = useState<Record<ProviderId, string>>({ codex: '', claude: '' })
   const [proxyValues, setProxyValues] = useState<Record<ProviderId, string>>({ codex: '', claude: '' })
+  const [proxyScope, setProxyScope] = useState<ProxyScope>('shared')
   const [notice, setNotice] = useState<{ provider: ProviderId; error?: string; message?: OAuthSettingsKey }>()
   const loadGeneration = useRef(0)
 
@@ -384,20 +457,26 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
   }, [load, subscribe])
 
   useEffect(() => {
-    const provider = providers.find(candidate => candidate.id === active?.provider)
-    if (active === undefined || provider === undefined || isTerminal(active.state.phase)) return
+    const pending = providers.flatMap(provider => {
+      const state = active[provider.id]
+      return state === undefined || isTerminal(state.phase) ? [] : [{ provider, state }]
+    })
+    if (pending.length === 0) return
     let live = true
     let timer: ReturnType<typeof setTimeout> | undefined
     const poll = async (): Promise<void> => {
       try {
-        const state = await flow(provider, active.state.id)
+        const results = await Promise.all(pending.map(async ({ provider, state }) => ({
+          provider,
+          state: await flow(provider, state.id),
+        })))
         if (!live) return
-        setActive({ provider: provider.id, state })
-        if (state.phase === 'complete') await load()
-        if (!isTerminal(state.phase)) timer = setTimeout(() => { void poll() }, 650)
+        setActive(current => ({ ...current, ...Object.fromEntries(results.map(result => [result.provider.id, result.state])) }))
+        if (results.some(result => result.state.phase === 'complete')) await load()
+        if (results.some(result => !isTerminal(result.state.phase))) timer = setTimeout(() => { void poll() }, 650)
       } catch (error) {
         if (!live) return
-        setNotice({ provider: provider.id, error: messageOf(error) })
+        setNotice({ provider: pending[0]!.provider.id, error: messageOf(error) })
         timer = setTimeout(() => { void poll() }, 1000)
       }
     }
@@ -406,7 +485,7 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
       live = false
       if (timer !== undefined) clearTimeout(timer)
     }
-  }, [active?.provider, active?.state.id, flow, load])
+  }, [active.codex?.id, active.codex?.revision, active.claude?.id, active.claude?.revision, flow, load])
 
   const switchLanguage = (next: Language): void => {
     setLanguage(next)
@@ -416,9 +495,10 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
   const begin = async (provider: ProviderCard): Promise<void> => {
     setBusy(provider.id)
     setNotice(undefined)
-    setManualValue('')
+    setManualValues(current => ({ ...current, [provider.id]: '' }))
     try {
-      setActive({ provider: provider.id, state: await start(provider) })
+      const state = await start(provider)
+      setActive(current => ({ ...current, [provider.id]: state }))
     } catch (error) {
       setNotice({ provider: provider.id, error: messageOf(error) })
     } finally {
@@ -427,20 +507,24 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
   }
 
   const answer = async (provider: ProviderCard, promptId: string, value: string): Promise<void> => {
-    if (active?.provider !== provider.id) return
+    const providerFlow = active[provider.id]
+    if (providerFlow === undefined) return
     setNotice(undefined)
     try {
-      setManualValue('')
-      setActive({ provider: provider.id, state: await respond(provider, active.state.id, promptId, value) })
+      setManualValues(current => ({ ...current, [provider.id]: '' }))
+      const state = await respond(provider, providerFlow.id, promptId, value)
+      setActive(current => ({ ...current, [provider.id]: state }))
     } catch (error) {
       setNotice({ provider: provider.id, error: messageOf(error) })
     }
   }
 
   const stop = async (provider: ProviderCard): Promise<void> => {
-    if (active?.provider !== provider.id) return
+    const providerFlow = active[provider.id]
+    if (providerFlow === undefined) return
     try {
-      setActive({ provider: provider.id, state: await cancel(provider, active.state.id) })
+      const state = await cancel(provider, providerFlow.id)
+      setActive(current => ({ ...current, [provider.id]: state }))
     } catch (error) {
       setNotice({ provider: provider.id, error: messageOf(error) })
     }
@@ -452,7 +536,7 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
     try {
       const status = await logout(provider)
       setStatuses(current => current === undefined ? current : { ...current, [provider.id]: status })
-      if (active?.provider === provider.id) setActive(undefined)
+      setActive(current => ({ ...current, [provider.id]: undefined }))
     } catch (error) {
       setNotice({ provider: provider.id, error: messageOf(error) })
     } finally {
@@ -460,14 +544,31 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
     }
   }
 
-  const saveProxy = async (provider: ProviderCard, value: string | null): Promise<void> => {
+  const saveProxy = async (provider: ProviderCard, value: string | null, scope: 'provider' | 'shared' = 'provider'): Promise<void> => {
     setBusy(provider.id)
     setNotice(undefined)
     try {
-      const status = await configureProxy(provider, value)
+      const status = await configureProxy(provider, value, scope)
       setStatuses(current => current === undefined ? current : { ...current, [provider.id]: status })
       setProxyValues(current => ({ ...current, [provider.id]: '' }))
       setNotice({ provider: provider.id, message: value === null ? 'proxyRemoved' : 'proxySaved' })
+    } catch (error) {
+      setNotice({ provider: provider.id, error: messageOf(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const updateProvider = async (
+    provider: ProviderCard,
+    operation: () => Promise<ProviderStatus>,
+  ): Promise<void> => {
+    setBusy(provider.id)
+    setNotice(undefined)
+    try {
+      const status = await operation()
+      setStatuses(current => current === undefined ? current : { ...current, [provider.id]: status })
+      await load()
     } catch (error) {
       setNotice({ provider: provider.id, error: messageOf(error) })
     } finally {
@@ -490,11 +591,13 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
           const providerStatus = statuses?.[provider.id]
           const connected = providerStatus?.connected
           const loading = statuses === undefined && loadError === undefined
-          const status = loading ? 'ongoing' : loadError !== undefined ? 'error' : connected === true ? 'done' : 'warning'
+          const status = loadError !== undefined ? 'error' : connected === true ? 'done' : 'warning'
           const statusText = loading ? format(copy, 'checking') : loadError !== undefined ? format(copy, 'unavailable') : connected === true ? format(copy, 'connected') : format(copy, 'disconnected')
           const isBusy = busy === provider.id
-          const providerFlow = active?.provider === provider.id ? active.state : undefined
+          const providerFlow = active[provider.id]
           const proxyValue = proxyValues[provider.id]
+          const proxyTarget = providers.find(candidate => candidate.id === (proxyScope === 'shared' ? provider.id : proxyScope)) ?? provider
+          const selectedProxyStatus = statuses?.[proxyTarget.id]
           const providerNotice = notice?.provider === provider.id ? notice : undefined
           return (
             <article key={provider.id} style={card} data-oauth-provider={provider.id}>
@@ -503,7 +606,12 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
                   <span style={nameStyle}>{format(copy, provider.name)}</span>
                   <p style={detail}>{format(copy, provider.description)}</p>
                 </div>
-                <span style={statusStyle} aria-label={statusText}><StateDot state={status} />{statusText}</span>
+                <span style={statusStyle} aria-label={statusText}>
+                  {loading
+                    ? <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--dsw-alias-label-tertiary)' }} />
+                    : <StateDot state={status} />}
+                  {statusText}
+                </span>
               </div>
               <div style={footer}>
                 <span style={routeStyle}>{provider.route}</span>
@@ -511,17 +619,81 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
                   ? <Button variant="outline" size="sm" onClick={() => { void load() }}>{format(copy, 'retry')}</Button>
                   : connected === true
                     ? <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void disconnect(provider) }}>{isBusy ? format(copy, 'starting') : format(copy, 'disconnect')}</Button>
-                    : <Button variant="primary" size="sm" disabled={loading || busy !== undefined || (active !== undefined && !isTerminal(active.state.phase))} onClick={() => { void begin(provider) }}>{isBusy ? format(copy, 'starting') : format(copy, provider.add)}</Button>}
+                    : <Button variant="primary" size="sm" disabled={loading || busy !== undefined || (providerFlow !== undefined && !isTerminal(providerFlow.phase))} onClick={() => { void begin(provider) }}>{isBusy ? format(copy, 'starting') : format(copy, provider.add)}</Button>}
               </div>
               <p style={detail}>{connected === true ? format(copy, 'routeReady') : format(copy, 'routeHidden')}</p>
+              {providerStatus?.accounts.length
+                ? (
+                    <div style={accountList}>
+                      <div style={accountRow}>
+                        <span style={nameStyle}>{format(copy, 'accounts')}</span>
+                        <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void updateProvider(provider, () => refreshSession(provider)) }}>{format(copy, 'refreshUsage')}</Button>
+                      </div>
+                      {providerStatus.accounts.map((account) => {
+                        const used = Math.round(account.usage.usedPercent ?? 0)
+                        const remaining = Math.round(account.usage.remainingPercent ?? Math.max(0, 100 - used))
+                        const reset = account.usage.resetsAt === undefined
+                          ? 'unknown'
+                          : new Date(account.usage.resetsAt * 1000).toLocaleString(language)
+                        const usageTitle = account.usage.source === 'unavailable'
+                          ? format(copy, 'usageUnavailable')
+                          : format(copy, 'usageDetails', { used: String(used), remaining: String(remaining), reset })
+                        return (
+                          <div key={account.id} style={accountRow} data-oauth-account={account.id}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} title={usageTitle}>
+                              <span style={usageCircle(used)} aria-label={`${used}%`} />
+                              <span style={detail}>{used}%</span>
+                              <span style={nameStyle}>{account.label}</span>
+                              {account.active ? <span style={successStyle}>{format(copy, 'activeAccount')}</span> : null}
+                            </div>
+                            <div style={actionRow}>
+                              {account.usage.resetCredits === undefined ? null : <span style={detail}>{format(copy, 'resetCredits', { count: String(account.usage.resetCredits) })}</span>}
+                              {!account.active
+                                ? <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void updateProvider(provider, () => selectAccount(provider, account.id)) }}>{format(copy, 'useAccount')}</Button>
+                                : null}
+                              {provider.id === 'codex'
+                                ? (
+                                    <label style={detail}>
+                                      <input type="checkbox" checked={account.useResetCredit} onChange={(event) => { void updateProvider(provider, () => configureResetCredit(provider, account.id, event.currentTarget.checked)) }} />{' '}
+                                      {format(copy, 'useResetCredit')}
+                                    </label>
+                                  )
+                                : null}
+                              {provider.id === 'claude'
+                                ? (
+                                    <form style={actionRow} onSubmit={(event) => {
+                                      event.preventDefault()
+                                      const data = new FormData(event.currentTarget)
+                                      const usedPercent = Number(data.get('usedPercent'))
+                                      const resetValue = String(data.get('resetsAt') ?? '')
+                                      const resetsAt = resetValue.length === 0 ? undefined : Math.floor(new Date(resetValue).getTime() / 1000)
+                                      void updateProvider(provider, () => configureUsage(provider, account.id, usedPercent, resetsAt))
+                                    }}>
+                                      <span style={detail}>{format(copy, 'claudeUsageHelp')}</span>
+                                      <input style={{ ...inputStyle, flex: '0 0 84px', minWidth: 84 }} name="usedPercent" type="number" min="0" max="100" defaultValue={account.configuredUsage?.usedPercent ?? 0} aria-label="Claude used percent" />
+                                      <input style={{ ...inputStyle, flex: '0 0 190px', minWidth: 190 }} name="resetsAt" type="datetime-local" defaultValue={account.configuredUsage?.resetsAt === undefined ? '' : new Date(account.configuredUsage.resetsAt * 1000).toISOString().slice(0, 16)} aria-label="Claude reset time" />
+                                      <Button variant="outline" size="sm" type="submit" disabled={busy !== undefined}>{format(copy, 'saveClaudeUsage')}</Button>
+                                    </form>
+                                  )
+                                : null}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                : null}
+              <div style={actionRow}>
+                <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void updateProvider(provider, () => refreshSession(provider)) }}>{format(copy, 'refreshSession')}</Button>
+              </div>
               {providerFlow === undefined
                 ? null
                 : (
                     <FlowPanel
                       flow={providerFlow}
                       copy={copy}
-                      manualValue={manualValue}
-                      setManualValue={setManualValue}
+                      manualValue={manualValues[provider.id]}
+                      setManualValue={(value) => { setManualValues(current => ({ ...current, [provider.id]: value })) }}
                       answer={(promptId, value) => { void answer(provider, promptId, value) }}
                       cancel={() => { void stop(provider) }}
                     />
@@ -532,9 +704,17 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
                 <p style={detail}>{format(copy, 'proxyBrowserNote')}</p>
                 <p style={detail}>
                   {providerStatus?.proxy.configured === true
-                    ? format(copy, 'proxyConfigured', { proxy: providerStatus.proxy.display ?? 'HTTP(S)' })
+                    ? `${format(copy, 'proxyConfigured', { proxy: providerStatus.proxy.display ?? 'HTTP(S)' })} · ${format(copy, providerStatus.proxy.source === 'shared' ? 'sharedProxySource' : 'providerProxySource')}`
                     : format(copy, 'proxyNotConfigured')}
                 </p>
+                <label style={detail}>
+                  {format(copy, 'proxyScope')}{' '}
+                  <select value={proxyScope} onChange={(event) => { setProxyScope(event.currentTarget.value as ProxyScope) }}>
+                    <option value="shared">{format(copy, 'sharedProxy')}</option>
+                    <option value="codex">{format(copy, 'codexProxy')}</option>
+                    <option value="claude">{format(copy, 'claudeProxy')}</option>
+                  </select>
+                </label>
                 <div style={inputRow}>
                   <input
                     aria-label={`${format(copy, provider.name)} ${format(copy, 'proxyTitle')}`}
@@ -549,11 +729,14 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
                       setProxyValues(current => ({ ...current, [provider.id]: value }))
                     }}
                   />
-                  <Button variant="outline" size="sm" disabled={busy !== undefined || proxyValue.trim().length === 0} onClick={() => { void saveProxy(provider, proxyValue) }}>
-                    {isBusy ? format(copy, 'savingProxy') : format(copy, providerStatus?.proxy.configured === true ? 'replaceProxy' : 'saveProxy')}
+                  <Button variant="outline" size="sm" disabled={busy !== undefined || proxyValue.trim().length === 0} onClick={() => { void saveProxy(proxyTarget, proxyValue, proxyScope === 'shared' ? 'shared' : 'provider') }}>
+                    {isBusy ? format(copy, 'savingProxy') : format(copy, selectedProxyStatus?.proxy.configured === true ? 'replaceProxy' : 'saveProxy')}
                   </Button>
-                  {providerStatus?.proxy.configured === true
-                    ? <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void saveProxy(provider, null) }}>{format(copy, 'removeProxy')}</Button>
+                  {(proxyScope === 'shared' ? selectedProxyStatus?.proxy.sharedConfigured : selectedProxyStatus?.proxy.providerConfigured) === true
+                    ? <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void saveProxy(proxyTarget, null, proxyScope === 'shared' ? 'shared' : 'provider') }}>{format(copy, 'removeProxy')}</Button>
+                    : null}
+                  {providerStatus?.proxy.providerConfigured === true && providerStatus.proxy.sharedConfigured !== true
+                    ? <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void updateProvider(provider, () => promoteProxy(provider)) }}>{format(copy, 'reuseForBoth')}</Button>
                     : null}
                 </div>
               </div>
@@ -595,6 +778,30 @@ export const inject = ['slots', 'locale', 'remote']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'oauth-model-providers: Settings dictionaries')
+  ctx.effect(() => {
+    type MutableLocale = {
+      dicts: Map<string, Map<string, Record<string, string>>>
+      getLocale(): { active: string }
+      publish(active: string, durable: boolean): void
+    }
+    const runtime = ctx.locale as unknown as MutableLocale
+    const model = runtime.dicts.get('model')
+    const english = model?.get('en')
+    const chinese = model?.get('zh')
+    if (english === undefined || chinese === undefined) return () => undefined
+    const oldEnglish = english['effort.providerDefault']
+    const oldChinese = chinese['effort.providerDefault']
+    english['effort.providerDefault'] = 'Default (model default effort)'
+    chinese['effort.providerDefault'] = '預設（模型預設推理等級）'
+    runtime.publish(runtime.getLocale().active, false)
+    return () => {
+      if (oldEnglish === undefined) delete english['effort.providerDefault']
+      else english['effort.providerDefault'] = oldEnglish
+      if (oldChinese === undefined) delete chinese['effort.providerDefault']
+      else chinese['effort.providerDefault'] = oldChinese
+      runtime.publish(runtime.getLocale().active, false)
+    }
+  }, 'oauth-model-providers: clarify provider-default reasoning effort')
 
   const describe = async (): Promise<Record<ProviderId, ProviderStatus>> => {
     const statuses = await Promise.all(providers.map(provider =>
@@ -609,9 +816,14 @@ export function apply(ctx: ClientContext): void {
     respond: (provider, flowId, promptId, value) => postJson(provider, '/respond', { flowId, promptId, value }),
     cancel: (provider, flowId) => postJson(provider, '/cancel', { flowId }),
     logout: provider => postJson(provider, '/logout', {}),
-    configureProxy: (provider, value) => postJson(provider, '/proxy', { value }),
+    configureProxy: (provider, value, scope) => postJson(provider, '/proxy', { value, scope }),
+    promoteProxy: provider => postJson(provider, '/proxy/promote', {}),
+    refreshSession: provider => postJson(provider, '/refresh', {}),
+    selectAccount: (provider, accountId) => postJson(provider, '/account/select', { accountId }),
+    configureResetCredit: (provider, accountId, enabled) => postJson(provider, '/account/reset-credit', { accountId, enabled }),
+    configureUsage: (provider, accountId, usedPercent, resetsAt) => postJson(provider, '/account/usage-config', { accountId, usedPercent, ...(resetsAt === undefined ? {} : { resetsAt }) }),
     subscribe: (listener) => {
-      const refs = new Set(providers.flatMap(provider => [provider.credentialRef, provider.proxyRef]))
+      const refs = new Set([...providers.flatMap(provider => [provider.credentialRef, provider.proxyRef]), 'DSH_OAUTH_SHARED_PROXY'])
       const stopCredential = ctx.remote.$on('credentials/updated', (ref) => {
         if (refs.has(ref)) listener()
       })

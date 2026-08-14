@@ -5,7 +5,16 @@ An experimental DeepSeek Harness bundle that adds two independent LLM routes:
 - `openai-codex-oauth` — OpenAI Codex models authenticated with a ChatGPT subscription login.
 - `anthropic-oauth` — Anthropic Claude models authenticated with a Claude Pro/Max login.
 
-The bundle uses DeepSeek Harness services for model routing, a same-origin Settings wizard, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`; model lists come from that package instead of being hard-coded here.
+The bundle uses DeepSeek Harness services for model routing, a same-origin Settings wizard, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`. After sign-in, the plugin fetches the account's provider-owned model catalog and keeps the bundled `pi-ai` catalog as an offline/failure fallback.
+
+## Version 0.5.1 additions
+
+- Multiple OAuth accounts per provider, account selection, live OpenAI usage/reset details, and a configurable Claude usage fallback.
+- Opt-in OpenAI earned reset-credit use and one-time account failover only on confirmed pre-output usage exhaustion, with a permanent in-chat notice.
+- One proxy selector for both providers, Codex only, or Claude only, including secure promotion of an existing provider proxy to the shared proxy.
+- Independent simultaneous provider logins and manual provider-session refresh.
+- Last-mile effort enforcement: OpenAI sends `reasoning.effort`; adaptive Claude sends `thinking.type=adaptive` plus `output_config.effort`.
+- `Default` means the provider/model default, not maximum effort, and is labelled accordingly.
 
 ## Compatibility
 
@@ -20,7 +29,7 @@ DeepSeek Harness is currently a developer preview. Pin the versions above and ex
 Install the packed bundle into a Web profile:
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.3.3.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.5.1.tgz
 dsh --profile web
 ```
 
@@ -44,7 +53,7 @@ In Harness Web:
 2. Optionally set a provider-specific HTTP(S) proxy. The secret URL is write-only in the Harness credential store.
 3. Click **Add Codex OAuth** or **Add Claude OAuth** and complete the steps inside the provider card. No command, chat, or Harness question overlay is required.
 4. Open the provider sign-in page. The card polls the host-owned flow and automatically detects the local OAuth callback (`localhost:1455` for Codex or `localhost:53692` for Claude). Pasting the returned URL/code remains available as a fallback.
-5. After sign-in succeeds, the provider appears in **Settings → Models** and its models appear automatically in the model picker.
+5. After sign-in succeeds, the provider appears in **Settings → Models**. The plugin automatically refreshes the models available to that account and updates the model picker.
 
 Use the English / 繁體中文 selector at the top of this section; English is the default for this plugin page.
 
@@ -71,33 +80,17 @@ Each provider can use a different HTTP or HTTPS forward proxy. The proxy is appl
 
 The external sign-in website is opened by your browser, so that page still follows the browser's own proxy/network settings. The plugin proxy covers DSH host traffic; it does not silently reconfigure the browser or Windows.
 
+## Automatic model discovery
+
+OpenAI Codex discovery reads the authenticated ChatGPT Codex catalog. Anthropic discovery reads the authenticated Models API, including capability and token-limit metadata when returned. Catalog traffic uses the same provider-specific proxy as OAuth and inference traffic.
+
+If discovery is unavailable, times out, or returns an invalid response, the plugin keeps the last known catalog; on a fresh start it falls back to the bundled `pi-ai` models. A catalog failure does not remove an already connected provider.
+
 ## Configuration
 
-The inserted Cordis row ids are `llm-openai-codex-oauth` and `llm-anthropic-oauth`. A profile patch can replace either row's config. A DeepSeek Harness id-targeted patch replaces the whole config, so restate every non-default value you want to keep.
+The inserted Cordis row ids are `llm-openai-codex-oauth` and `llm-anthropic-oauth`. A profile patch can replace either row's config. A DeepSeek Harness id-targeted patch replaces the whole config, so restate every non-default value you want to keep. Start from [`config/examples/oauth-providers.example.yml`](config/examples/oauth-providers.example.yml).
 
-```yaml
-- id: llm-openai-codex-oauth
-  config:
-    route: openai-codex-oauth
-    displayName: OpenAI Codex (OAuth)
-    credentialRef: DSH_OPENAI_CODEX_OAUTH
-    proxyCredentialRef: DSH_OPENAI_CODEX_PROXY
-    loginCommand: login-openai
-    statusCommand: status-openai
-    logoutCommand: logout-openai
-    streamIdleTimeoutMs: 300000
-
-- id: llm-anthropic-oauth
-  config:
-    route: anthropic-oauth
-    displayName: Anthropic Claude (OAuth)
-    credentialRef: DSH_ANTHROPIC_OAUTH
-    proxyCredentialRef: DSH_ANTHROPIC_PROXY
-    loginCommand: login-claude
-    statusCommand: status-claude
-    logoutCommand: logout-claude
-    streamIdleTimeoutMs: 300000
-```
+Runtime configuration is deliberately separate from source control. Keep local overrides under `config/runtime/` or name them `config/*.local.yml`; both forms are ignored. OAuth credentials, proxy URLs, populated profiles, and callback URLs must remain in the Harness credential/profile store and never be copied into this repository. The tracked `cordis.patch.yml` is only the secret-free bundle composition manifest required by DSH.
 
 Optional transport controls are `transport`, `timeoutMs`, `websocketConnectTimeoutMs`, and `retryPolicy`, matching `dsh-llm-pi-ai` behavior.
 
@@ -107,6 +100,7 @@ Optional transport controls are `transport`, `timeoutMs`, `websocketConnectTimeo
 - Anthropic OAuth here targets the Claude Pro/Max flow used by Claude coding tools. It is not the Anthropic API-key route.
 - These consumer OAuth flows are not documented as a stable, general-purpose third-party integration contract. Provider-side policy or protocol changes can break them. Check the applicable provider terms before use; prefer official API credentials for production integrations.
 - Refresh serialization is process-local. Do not run multiple Harness processes against the same OAuth credential reference, because rotating refresh tokens can race across processes.
+- Remote model catalogs are advisory provider responses. The bundled catalog remains the safety fallback when discovery cannot be completed.
 - A real account login was deliberately not automated by the test suite. Complete each login interactively and verify one model request in your own profile.
 - A successful proxy setup check is not proof of a completed model request. Verify one real request after OAuth succeeds.
 
@@ -118,4 +112,8 @@ pnpm test
 pnpm run build
 ```
 
-The focused tests cover secret-safe credential metadata, serialized refresh mutations, upstream route identity, stored-credential callback reconciliation, proxy URL redaction, and per-provider proxy stream options.
+The focused tests cover secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, proxy URL redaction, and per-provider proxy stream options.
+
+## License
+
+This project is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial or anticipated commercial use is not permitted by that license. It is not an OSI-approved open-source license.

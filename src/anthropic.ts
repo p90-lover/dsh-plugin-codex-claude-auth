@@ -23,6 +23,7 @@ export const Config = oauthProviderConfig(DEFAULTS)
 export function apply(ctx: Context, config: Config): void {
   applyOAuthProvider(ctx, config, {
     authProviderId: 'anthropic',
+    modelCatalog: 'anthropic',
     defaults: DEFAULTS,
     createProvider: anthropicProvider,
   })

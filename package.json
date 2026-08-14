@@ -1,7 +1,7 @@
 {
   "name": "dsh-oauth-model-providers",
-  "version": "0.3.3",
-  "description": "OpenAI Codex and Anthropic OAuth model providers with a direct bilingual DeepSeek Harness Settings wizard and per-provider proxy support",
+  "version": "0.5.1",
+  "description": "OpenAI Codex and Anthropic OAuth model providers with bilingual DeepSeek Harness Settings, proxy support, and automatic model discovery",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
@@ -29,6 +29,7 @@
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
+    "config/examples",
     "LICENSE"
   ],
   "dsh": {
@@ -48,7 +49,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run tests/credential-store.spec.ts tests/routed-provider.spec.ts tests/browser-auth.spec.ts tests/proxy.spec.ts",
+    "test": "vitest run tests/credential-store.spec.ts tests/routed-provider.spec.ts tests/model-discovery.spec.ts tests/browser-auth.spec.ts tests/proxy.spec.ts",
     "check": "npm run typecheck && npm run test && npm run build"
   },
   "engines": {
@@ -76,25 +77,63 @@
     "react": "^18.2.0"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/cordis": { "optional": true },
-    "@deepseek-ai/dsh-agent": { "optional": true },
-    "@deepseek-ai/dsh-commands": { "optional": true },
-    "@deepseek-ai/dsh-credentials": { "optional": true },
-    "@deepseek-ai/dsh-llm": { "optional": true },
-    "@deepseek-ai/dsh-llm-pi-ai": { "optional": true },
-    "@deepseek-ai/dsh-settings": { "optional": true },
-    "@deepseek-ai/dsh-host-webserver": { "optional": true },
-    "@deepseek-ai/dsh-user-questions": { "optional": true },
-    "@deepseek-ai/dsh-api-remotes": { "optional": true },
-    "@deepseek-ai/dsh-client-connection": { "optional": true },
-    "@deepseek-ai/dsh-client-locale": { "optional": true },
-    "@deepseek-ai/dsh-client-runtime": { "optional": true },
-    "@deepseek-ai/dsh-client-ui-primitives": { "optional": true },
-    "@deepseek-ai/dsh-client-ui-settings": { "optional": true },
-    "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
-    "@deepseek-ai/schemastery": { "optional": true },
-    "@earendil-works/pi-ai": { "optional": true },
-    "react": { "optional": true }
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-commands": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-credentials": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm-pi-ai": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-host-webserver": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-questions": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-api-remotes": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-connection": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-locale": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-runtime": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-primitives": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-slots": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
   },
   "dependencies": {
     "undici": "7.28.0"
@@ -130,5 +169,5 @@
     "anthropic",
     "oauth"
   ],
-  "license": "MIT"
+  "license": "PolyForm-Noncommercial-1.0.0"
 }

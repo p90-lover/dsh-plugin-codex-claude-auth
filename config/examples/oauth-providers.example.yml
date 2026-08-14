@@ -1,0 +1,25 @@
+# Safe source-control example only. Never place OAuth tokens, callback URLs,
+# proxy credentials, or a populated DSH profile in this file.
+- id: llm-openai-codex-oauth
+  config:
+    route: openai-codex-oauth
+    displayName: OpenAI Codex (OAuth)
+    credentialRef: DSH_OPENAI_CODEX_OAUTH
+    proxyCredentialRef: DSH_OPENAI_CODEX_PROXY
+    sharedProxyCredentialRef: DSH_OAUTH_SHARED_PROXY
+    loginCommand: login-openai
+    statusCommand: status-openai
+    logoutCommand: logout-openai
+    streamIdleTimeoutMs: 300000
+
+- id: llm-anthropic-oauth
+  config:
+    route: anthropic-oauth
+    displayName: Anthropic Claude (OAuth)
+    credentialRef: DSH_ANTHROPIC_OAUTH
+    proxyCredentialRef: DSH_ANTHROPIC_PROXY
+    sharedProxyCredentialRef: DSH_OAUTH_SHARED_PROXY
+    loginCommand: login-claude
+    statusCommand: status-claude
+    logoutCommand: logout-claude
+    streamIdleTimeoutMs: 300000

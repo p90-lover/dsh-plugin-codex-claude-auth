@@ -50,8 +50,97 @@ function parseOAuthCredential(value: string, providerId: string, ref: Credential
   }
 }
 
-function serializeOAuthCredential(credential: OAuthCredential): string {
-  return JSON.stringify(credential)
+interface StoredAccount {
+  id: string
+  label: string
+  credential: OAuthCredential
+  useResetCredit?: boolean
+  configuredUsage?: { usedPercent: number; resetsAt?: number }
+}
+
+interface StoredAccountBundle {
+  version: 1
+  activeAccountId: string
+  accounts: StoredAccount[]
+}
+
+export interface PublicOAuthAccount {
+  id: string
+  label: string
+  active: boolean
+  useResetCredit: boolean
+  configuredUsage?: { usedPercent: number; resetsAt?: number }
+}
+
+function tokenClaims(token: string): Record<string, unknown> | undefined {
+  const segment = token.split('.')[1]
+  if (segment === undefined) return undefined
+  try {
+    const parsed = JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as unknown
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function accountIdentity(credential: OAuthCredential, index: number): { id: string; label: string } {
+  const record = credential as OAuthCredential & Record<string, unknown>
+  const claims = tokenClaims(credential.access)
+  const stable = [record.accountId, record.account_id, claims?.sub, claims?.['https://api.openai.com/auth']]
+    .find(value => typeof value === 'string' && value.length > 0)
+  const idSource = typeof stable === 'string' ? stable : credential.refresh
+  const id = createHash('sha256').update(idSource).digest('hex').slice(0, 20)
+  const email = [record.email, claims?.email].find(value => typeof value === 'string' && value.includes('@'))
+  return { id, label: typeof email === 'string' ? email : `Account ${index}` }
+}
+
+function parseStoredValue(value: string, providerId: string, ref: CredentialRef): StoredAccountBundle {
+  let parsed: unknown
+  try { parsed = JSON.parse(value) } catch { parsed = undefined }
+  if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+    const record = parsed as Record<string, unknown>
+    if (record.version === 1 && typeof record.activeAccountId === 'string' && Array.isArray(record.accounts)) {
+      const accounts = record.accounts.map((entry, index): StoredAccount => {
+        if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+          throw new Error(`oauth-model-provider: invalid account entry ${index + 1} for ${providerId}`)
+        }
+        const item = entry as Record<string, unknown>
+        const credential = parseOAuthCredential(JSON.stringify(item.credential), providerId, ref)
+        const identity = accountIdentity(credential, index + 1)
+        const configured = typeof item.configuredUsage === 'object' && item.configuredUsage !== null
+          ? item.configuredUsage as Record<string, unknown>
+          : undefined
+        const usedPercent = typeof configured?.usedPercent === 'number' && Number.isFinite(configured.usedPercent)
+          ? configured.usedPercent
+          : undefined
+        const resetsAt = typeof configured?.resetsAt === 'number' && Number.isFinite(configured.resetsAt)
+          ? configured.resetsAt
+          : undefined
+        return {
+          id: typeof item.id === 'string' && item.id.length > 0 ? item.id : identity.id,
+          label: typeof item.label === 'string' && item.label.length > 0 ? item.label : identity.label,
+          credential,
+          useResetCredit: item.useResetCredit === true,
+          ...usedPercent === undefined ? {} : {
+            configuredUsage: { usedPercent, ...(resetsAt === undefined ? {} : { resetsAt }) },
+          },
+        }
+      })
+      if (accounts.length === 0) throw new Error(`oauth-model-provider: ${providerId} account bundle is empty`)
+      return {
+        version: 1,
+        activeAccountId: accounts.some(account => account.id === record.activeAccountId)
+          ? record.activeAccountId
+          : accounts[0]!.id,
+        accounts,
+      }
+    }
+  }
+  const credential = parseOAuthCredential(value, providerId, ref)
+  const identity = accountIdentity(credential, 1)
+  return { version: 1, activeAccountId: identity.id, accounts: [{ ...identity, credential }] }
 }
 
 /**
@@ -61,6 +150,7 @@ function serializeOAuthCredential(credential: OAuthCredential): string {
  */
 export class HarnessOAuthCredentialStore implements CredentialStore {
   private readonly chains = new Map<string, Promise<unknown>>()
+  private readonly enrolling = new Set<string>()
 
   constructor(
     private readonly backend: HarnessCredentialBackend,
@@ -87,7 +177,9 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
     const ref = this.refs.get(providerId)
     if (ref === undefined) return undefined
     const resolved = await this.backend.resolve(ref)
-    return resolved === undefined ? undefined : parseOAuthCredential(resolved.value, providerId, ref)
+    if (resolved === undefined) return undefined
+    const bundle = parseStoredValue(resolved.value, providerId, ref)
+    return bundle.accounts.find(account => account.id === bundle.activeAccountId)?.credential
   }
 
   async list(): Promise<readonly CredentialInfo[]> {
@@ -106,15 +198,141 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
   ): Promise<Credential | undefined> {
     const ref = this.ref(providerId)
     return this.enqueue(providerId, async () => {
-      const current = await this.read(providerId)
+      const resolved = await this.backend.resolve(ref)
+      const bundle = resolved === undefined ? undefined : parseStoredValue(resolved.value, providerId, ref)
+      const active = bundle?.accounts.find(account => account.id === bundle.activeAccountId)
+      const current = active?.credential
       const next = await fn(current)
       if (next === undefined) return current
       if (next.type !== 'oauth') {
         throw new Error(`oauth-model-provider: ${providerId} only accepts OAuth credentials`)
       }
-      await this.backend.set(ref, serializeOAuthCredential(next))
+      const identity = accountIdentity(next, (bundle?.accounts.length ?? 0) + 1)
+      let updated: StoredAccountBundle
+      if (bundle === undefined) {
+        updated = { version: 1, activeAccountId: identity.id, accounts: [{ ...identity, credential: next }] }
+      } else if (this.enrolling.has(providerId)) {
+        const matching = bundle.accounts.findIndex(account => account.id === identity.id)
+        const account = {
+          ...identity,
+          credential: next,
+          useResetCredit: matching >= 0 ? bundle.accounts[matching]!.useResetCredit === true : false,
+        }
+        const accounts = matching < 0
+          ? [...bundle.accounts, account]
+          : bundle.accounts.map((existing, index) => index === matching ? account : existing)
+        updated = { version: 1, activeAccountId: identity.id, accounts }
+      } else {
+        const account = active === undefined
+          ? { ...identity, credential: next }
+          : { ...active, credential: next }
+        const accounts = active === undefined
+          ? [...bundle.accounts, account]
+          : bundle.accounts.map(existing => existing.id === active.id ? account : existing)
+        updated = { version: 1, activeAccountId: account.id, accounts }
+      }
+      await this.backend.set(ref, JSON.stringify(updated))
       return next
     })
+  }
+
+  /** Mark the next credential write as a new-account enrollment, not a refresh. */
+  beginEnrollment(providerId: string): () => void {
+    this.enrolling.add(providerId)
+    return () => { this.enrolling.delete(providerId) }
+  }
+
+  async accounts(providerId: string): Promise<readonly PublicOAuthAccount[]> {
+    const ref = this.refs.get(providerId)
+    if (ref === undefined) return []
+    const resolved = await this.backend.resolve(ref)
+    if (resolved === undefined) return []
+    const bundle = parseStoredValue(resolved.value, providerId, ref)
+    return bundle.accounts.map(account => ({
+      id: account.id,
+      label: account.label,
+      active: account.id === bundle.activeAccountId,
+      useResetCredit: account.useResetCredit === true,
+      ...account.configuredUsage === undefined ? {} : { configuredUsage: { ...account.configuredUsage } },
+    }))
+  }
+
+  select(providerId: string, accountId: string): Promise<void> {
+    const ref = this.ref(providerId)
+    return this.enqueue(providerId, async () => {
+      const resolved = await this.backend.resolve(ref)
+      if (resolved === undefined) throw new Error('No OAuth accounts are saved.')
+      const bundle = parseStoredValue(resolved.value, providerId, ref)
+      if (!bundle.accounts.some(account => account.id === accountId)) throw new Error('OAuth account not found.')
+      await this.backend.set(ref, JSON.stringify({ ...bundle, activeAccountId: accountId }))
+    })
+  }
+
+  setUseResetCredit(providerId: string, accountId: string, enabled: boolean): Promise<void> {
+    const ref = this.ref(providerId)
+    return this.enqueue(providerId, async () => {
+      const resolved = await this.backend.resolve(ref)
+      if (resolved === undefined) throw new Error('No OAuth accounts are saved.')
+      const bundle = parseStoredValue(resolved.value, providerId, ref)
+      if (!bundle.accounts.some(account => account.id === accountId)) throw new Error('OAuth account not found.')
+      await this.backend.set(ref, JSON.stringify({
+        ...bundle,
+        accounts: bundle.accounts.map(account => account.id === accountId
+          ? { ...account, useResetCredit: enabled }
+          : account),
+      }))
+    })
+  }
+
+  setConfiguredUsage(
+    providerId: string,
+    accountId: string,
+    configuredUsage: { usedPercent: number; resetsAt?: number },
+  ): Promise<void> {
+    const ref = this.ref(providerId)
+    return this.enqueue(providerId, async () => {
+      const resolved = await this.backend.resolve(ref)
+      if (resolved === undefined) throw new Error('No OAuth accounts are saved.')
+      const bundle = parseStoredValue(resolved.value, providerId, ref)
+      if (!bundle.accounts.some(account => account.id === accountId)) throw new Error('OAuth account not found.')
+      await this.backend.set(ref, JSON.stringify({
+        ...bundle,
+        accounts: bundle.accounts.map(account => account.id === accountId
+          ? { ...account, configuredUsage }
+          : account),
+      }))
+    })
+  }
+
+  async accountCredentials(providerId: string): Promise<readonly {
+    account: PublicOAuthAccount
+    credential: OAuthCredential
+  }[]> {
+    const ref = this.refs.get(providerId)
+    if (ref === undefined) return []
+    const resolved = await this.backend.resolve(ref)
+    if (resolved === undefined) return []
+    const bundle = parseStoredValue(resolved.value, providerId, ref)
+    return bundle.accounts.map(account => ({
+      account: {
+        id: account.id,
+        label: account.label,
+        active: account.id === bundle.activeAccountId,
+        useResetCredit: account.useResetCredit === true,
+        ...account.configuredUsage === undefined ? {} : { configuredUsage: { ...account.configuredUsage } },
+      },
+      credential: { ...account.credential },
+    }))
+  }
+
+  async rotateNext(providerId: string): Promise<{ from: PublicOAuthAccount; to: PublicOAuthAccount } | undefined> {
+    const entries = await this.accountCredentials(providerId)
+    if (entries.length < 2) return undefined
+    const index = entries.findIndex(entry => entry.account.active)
+    const from = entries[index < 0 ? 0 : index]!.account
+    const to = entries[(index < 0 ? 1 : index + 1) % entries.length]!.account
+    await this.select(providerId, to.id)
+    return { from, to: { ...to, active: true } }
   }
 
   delete(providerId: string): Promise<void> {
@@ -129,3 +347,4 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
 export function credentialBackend(provider: CredentialProvider): HarnessCredentialBackend {
   return provider
 }
+import { createHash } from 'node:crypto'
