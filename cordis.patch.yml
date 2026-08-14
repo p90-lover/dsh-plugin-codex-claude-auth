@@ -1,0 +1,7 @@
+- insert:
+    - id: ui-oauth-model-providers
+      name: 'dsh-oauth-model-providers'
+    - id: llm-openai-codex-oauth
+      name: 'dsh-oauth-model-providers/openai'
+    - id: llm-anthropic-oauth
+      name: 'dsh-oauth-model-providers/anthropic'
