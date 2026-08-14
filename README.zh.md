@@ -20,9 +20,11 @@ DeepSeek Harness 目前仍是開發者預覽版。請鎖定以上版本，並預
 將打包檔安裝到 Web profile：
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.3.2.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.3.3.tgz
 dsh --profile web
 ```
+
+請使用 `dsh plugin` 安裝到 profile。不要直接在 `$DSH_HOME/profiles/web` 執行 `npm install`；npm 會自動安裝 Harness peer 套件，可能形成第二份 DSH 執行環境，並在工作階段恢復時破壞 agent scope 識別。
 
 若使用原始碼資料夾，先安裝相依套件並建置，再把套件目錄交給 `dsh plugin add`：
 
@@ -42,7 +44,7 @@ dsh plugin --profile web add .
 2. 可選擇為個別提供者設定 HTTP(S) 代理伺服器。機密網址只會寫入 Harness 憑證儲存區。
 3. 點選 **新增 Codex OAuth** 或 **新增 Claude OAuth**，直接在提供者卡片內完成步驟；不需要指令、聊天或 Harness 提問浮層。
 4. 開啟提供者登入頁。卡片會輪詢主機端流程，並自動偵測本機 OAuth 回呼（Codex 使用 `localhost:1455`，Claude 使用 `localhost:53692`）。仍可在失敗時手動貼上返回網址或授權碼。
-5. 登入成功後，提供者及其模型會自動出現在模型選擇器。
+5. 登入成功後，提供者會出現在 **設定 → 模型**，其模型也會自動出現在模型選擇器。
 
 此設定區頂端可切換 English / 繁體中文；此外掛頁面預設使用英文。
 
@@ -116,4 +118,4 @@ pnpm test
 pnpm run build
 ```
 
-聚焦測試涵蓋：不洩漏機密的憑證中繼資料、依序執行的更新操作、上游路由識別、自動回呼狀態完成、代理網址遮蔽，以及個別提供者的代理串流選項。
+聚焦測試涵蓋：不洩漏機密的憑證中繼資料、依序執行的更新操作、上游路由識別、已儲存憑證的回呼狀態校正、代理網址遮蔽，以及個別提供者的代理串流選項。

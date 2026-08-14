@@ -128,6 +128,23 @@ export class BrowserOAuthFlow {
     return terminal(this.state.phase)
   }
 
+  /** Reconcile the public flow with a credential already committed by pi-ai. */
+  reconcileConnected(): BrowserOAuthState {
+    if (this.state.phase === 'complete' && this.state.connected) return this.snapshot()
+    this.update({
+      phase: 'complete',
+      connected: true,
+      prompt: undefined,
+      progress: 'Sign-in completed.',
+      error: undefined,
+    })
+    // A provider may still be settling a now-obsolete manual fallback prompt.
+    // Abort it only after publishing success; the login rejection handler sees
+    // the aborted signal and cannot replace this definitive stored state.
+    this.abort.abort('OAuth credential already stored')
+    return this.snapshot()
+  }
+
   private update(change: BrowserOAuthChange): void {
     const next = { ...this.state, revision: this.state.revision + 1 }
     const mutable = next as unknown as Record<string, unknown>
@@ -367,8 +384,13 @@ export class BrowserOAuthController {
   async status(): Promise<BrowserOAuthStatus> {
     await this.proxy.refresh()
     const stored = await this.store.read(this.authProviderId)
+    const connected = stored?.type === 'oauth'
+    if (connected) {
+      this.active?.reconcileConnected()
+      this.setAvailable(true)
+    }
     return {
-      connected: stored?.type === 'oauth',
+      connected,
       proxy: this.proxy.describe(),
     }
   }
@@ -385,8 +407,13 @@ export class BrowserOAuthController {
     return flow.snapshot()
   }
 
-  state(id: string): BrowserOAuthState {
+  async state(id: string): Promise<BrowserOAuthState> {
     if (this.active?.id !== id) throw new HttpError(404, 'OAuth flow not found.')
+    const stored = await this.store.read(this.authProviderId)
+    if (stored?.type === 'oauth') {
+      this.active.reconcileConnected()
+      this.setAvailable(true)
+    }
     return this.active.snapshot()
   }
 
@@ -464,7 +491,7 @@ export function installBrowserOAuth(
             if ((req.method === 'GET' || isHead) && action === '/state') {
               const flowId = requestUrl.searchParams.get('flowId')
               if (flowId === null) throw new HttpError(400, 'flowId is required.')
-              sendJson(res, 200, controller.state(flowId), isHead)
+              sendJson(res, 200, await controller.state(flowId), isHead)
               return
             }
             if (req.method !== 'POST') throw new HttpError(405, 'Method not allowed.')

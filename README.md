@@ -20,9 +20,11 @@ DeepSeek Harness is currently a developer preview. Pin the versions above and ex
 Install the packed bundle into a Web profile:
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.3.2.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.3.3.tgz
 dsh --profile web
 ```
+
+Use `dsh plugin` for profile installation. Do not run `npm install` directly inside `$DSH_HOME/profiles/web`: npm auto-installs the Harness peer packages and can create a second DSH runtime, which breaks agent scope identity during session resume.
 
 For a source checkout, install dependencies, build it, and give `dsh plugin add` the package directory instead:
 
@@ -42,7 +44,7 @@ In Harness Web:
 2. Optionally set a provider-specific HTTP(S) proxy. The secret URL is write-only in the Harness credential store.
 3. Click **Add Codex OAuth** or **Add Claude OAuth** and complete the steps inside the provider card. No command, chat, or Harness question overlay is required.
 4. Open the provider sign-in page. The card polls the host-owned flow and automatically detects the local OAuth callback (`localhost:1455` for Codex or `localhost:53692` for Claude). Pasting the returned URL/code remains available as a fallback.
-5. After sign-in succeeds, the provider and its models appear automatically in the model picker.
+5. After sign-in succeeds, the provider appears in **Settings → Models** and its models appear automatically in the model picker.
 
 Use the English / 繁體中文 selector at the top of this section; English is the default for this plugin page.
 
@@ -116,4 +118,4 @@ pnpm test
 pnpm run build
 ```
 
-The focused tests cover secret-safe credential metadata, serialized refresh mutations, upstream route identity, direct callback-state completion, proxy URL redaction, and per-provider proxy stream options.
+The focused tests cover secret-safe credential metadata, serialized refresh mutations, upstream route identity, stored-credential callback reconciliation, proxy URL redaction, and per-provider proxy stream options.

@@ -65,4 +65,25 @@ describe('BrowserOAuthFlow', () => {
     await vi.waitFor(() => { expect(providerCleanedUp).toBe(true) })
     expect(flow.snapshot()).toMatchObject({ phase: 'cancelled', connected: false })
   })
+
+  it('settles a late browser flow from the credential store truth', async () => {
+    const flow = new BrowserOAuthFlow('OpenAI Codex (OAuth)')
+    let providerCleanedUp = false
+
+    flow.start(async interaction => {
+      try {
+        await interaction.prompt({
+          type: 'manual_code',
+          message: 'Waiting for callback',
+        })
+      } finally {
+        providerCleanedUp = true
+      }
+    })
+
+    await vi.waitFor(() => { expect(flow.snapshot().phase).toBe('input') })
+    expect(flow.reconcileConnected()).toMatchObject({ phase: 'complete', connected: true })
+    await vi.waitFor(() => { expect(providerCleanedUp).toBe(true) })
+    expect(flow.snapshot()).toMatchObject({ phase: 'complete', connected: true })
+  })
 })

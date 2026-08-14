@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -330,6 +330,25 @@ function FlowPanel({ flow, copy, manualValue, setManualValue, answer, cancel }: 
 }
 
 function OAuthSettingsSection(props: SettingsProps): ReactNode {
+  const candidate = props as Partial<SettingsInjected>
+  if (typeof candidate.describe !== 'function'
+    || typeof candidate.start !== 'function'
+    || typeof candidate.flow !== 'function'
+    || typeof candidate.respond !== 'function'
+    || typeof candidate.cancel !== 'function'
+    || typeof candidate.logout !== 'function'
+    || typeof candidate.configureProxy !== 'function'
+    || typeof candidate.subscribe !== 'function') {
+    return (
+      <section style={page} aria-busy="true" aria-live="polite">
+        <p style={intro}>Loading OAuth providers… / 正在載入 OAuth 提供者…</p>
+      </section>
+    )
+  }
+  return <LoadedOAuthSettingsSection {...props} />
+}
+
+function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
   const { describe, start, flow, respond, cancel, logout, configureProxy, subscribe } = props
   const [language, setLanguage] = useState<Language>(loadLanguage)
   const copy = language === 'zh-TW' ? zh : en
@@ -340,19 +359,28 @@ function OAuthSettingsSection(props: SettingsProps): ReactNode {
   const [manualValue, setManualValue] = useState('')
   const [proxyValues, setProxyValues] = useState<Record<ProviderId, string>>({ codex: '', claude: '' })
   const [notice, setNotice] = useState<{ provider: ProviderId; error?: string; message?: OAuthSettingsKey }>()
+  const loadGeneration = useRef(0)
 
   const load = useCallback(async (): Promise<void> => {
+    const generation = ++loadGeneration.current
     try {
-      setStatuses(await describe())
+      const next = await describe()
+      if (generation !== loadGeneration.current) return
+      setStatuses(next)
       setLoadError(undefined)
     } catch (error) {
+      if (generation !== loadGeneration.current) return
       setLoadError(messageOf(error))
     }
   }, [describe])
 
   useEffect(() => {
     void load()
-    return subscribe(() => { void load() })
+    const dispose = subscribe(() => { void load() })
+    return () => {
+      loadGeneration.current += 1
+      dispose()
+    }
   }, [load, subscribe])
 
   useEffect(() => {

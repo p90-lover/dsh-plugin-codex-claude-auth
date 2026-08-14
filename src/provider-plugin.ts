@@ -6,8 +6,11 @@ import {
 } from '@earendil-works/pi-ai'
 import type { Context } from '@deepseek-ai/cordis'
 import { LlmError } from '@deepseek-ai/dsh-llm'
+import type { DirectoryRegistrationHandle, LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
+import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import z from '@deepseek-ai/schemastery'
 import type { OAuthProviderConfig, OAuthProviderDefaults } from './config.ts'
 import { resolveOAuthProviderConfig } from './config.ts'
 import { credentialBackend, HarnessOAuthCredentialStore } from './credential-store.ts'
@@ -15,6 +18,8 @@ import { installOAuthCommands } from './commands.ts'
 import { installBrowserOAuth } from './browser-auth.ts'
 import { ProviderProxySetting, proxyAwareProvider } from './proxy.ts'
 import { routedProvider } from './routed-provider.ts'
+
+const DIRECTORY_SETTINGS_SCHEMA = z.object({})
 
 /** Provider facts fixed by one exported plugin entry point. */
 export interface OAuthProviderSpec {
@@ -81,10 +86,41 @@ export function applyOAuthProvider(
 
   const registration = ctx.llm.registerAdapter([config.route], adapter)
   registration.replace([])
+  const settingsNs = settingsNamespace(`oauth-model-provider-${config.route}`)
+  const directoryEntry: LlmConfigurableProvider = {
+    provider: config.route,
+    displayName: config.displayName,
+    settingsNs,
+    settingsPath: [],
+  }
+  installSettingsSection(ctx, settingsNs, DIRECTORY_SETTINGS_SCHEMA, {}, {
+    setSource: () => undefined,
+    onChange: () => undefined,
+  })
+
   let availabilityRevision = 0
+  let routeAvailable = false
+  let directoryAvailable = false
+  let directory: DirectoryRegistrationHandle | undefined
   const setAvailable = (available: boolean): void => {
     availabilityRevision += 1
-    registration.replace(available ? [config.route] : [])
+    if (routeAvailable !== available) {
+      registration.replace(available ? [config.route] : [])
+      routeAvailable = available
+    }
+    if (directoryAvailable === available) return
+    try {
+      if (directory === undefined) {
+        if (!available) return
+        directory = ctx.llm.registerConfigurableProviders([directoryEntry])
+      } else {
+        directory.replace(available ? [directoryEntry] : [])
+      }
+      directoryAvailable = available
+    } catch (error) {
+      ctx.logger.warn(`oauth-model-provider: could not ${available ? 'publish' : 'hide'} ${config.displayName} in the Models provider directory`)
+      ctx.logger.warn(error)
+    }
   }
 
   ctx.effect(() => {
@@ -94,9 +130,7 @@ export function applyOAuthProvider(
       store.read(spec.authProviderId),
       proxy.refresh().then(() => undefined),
     ]).then(([stored]) => {
-      if (live && availabilityRevision === bootstrapRevision && stored?.type === 'oauth') {
-        registration.replace([config.route])
-      }
+      if (live && availabilityRevision === bootstrapRevision && stored?.type === 'oauth') setAvailable(true)
     }, (error) => {
       if (!live) return
       ctx.logger.warn(`oauth-model-provider: could not read initial ${config.displayName} OAuth/proxy state`)
