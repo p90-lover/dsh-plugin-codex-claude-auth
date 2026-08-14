@@ -12,6 +12,8 @@ import type { OAuthProviderConfig, OAuthProviderDefaults } from './config.ts'
 import { resolveOAuthProviderConfig } from './config.ts'
 import { credentialBackend, HarnessOAuthCredentialStore } from './credential-store.ts'
 import { installOAuthCommands } from './commands.ts'
+import { installBrowserOAuth } from './browser-auth.ts'
+import { ProviderProxySetting, proxyAwareProvider } from './proxy.ts'
 import { routedProvider } from './routed-provider.ts'
 
 /** Provider facts fixed by one exported plugin entry point. */
@@ -39,15 +41,18 @@ export function applyOAuthProvider(
   spec: OAuthProviderSpec,
 ): void {
   const config = resolveOAuthProviderConfig(source, spec.defaults)
-  const provider = spec.createProvider()
-  if (provider.id !== spec.authProviderId) {
+  const baseProvider = spec.createProvider()
+  if (baseProvider.id !== spec.authProviderId) {
     throw new Error(
-      `oauth-model-provider: factory returned provider "${provider.id}", expected "${spec.authProviderId}"`,
+      `oauth-model-provider: factory returned provider "${baseProvider.id}", expected "${spec.authProviderId}"`,
     )
   }
 
+  const backend = credentialBackend(ctx.credentials)
+  const proxy = new ProviderProxySetting(backend, config.proxyCredentialRef)
+  const provider = proxyAwareProvider(baseProvider, () => proxy.value)
   const store = new HarnessOAuthCredentialStore(
-    credentialBackend(ctx.credentials),
+    backend,
     new Map([[spec.authProviderId, config.credentialRef]]),
   )
   const authModels: MutableModels = createModels({ credentials: store })
@@ -85,20 +90,49 @@ export function applyOAuthProvider(
   ctx.effect(() => {
     let live = true
     const bootstrapRevision = availabilityRevision
+    void Promise.all([
+      store.read(spec.authProviderId),
+      proxy.refresh().then(() => undefined),
+    ]).then(([stored]) => {
+      if (live && availabilityRevision === bootstrapRevision && stored?.type === 'oauth') {
+        registration.replace([config.route])
+      }
+    }, (error) => {
+      if (!live) return
+      ctx.logger.warn(`oauth-model-provider: could not read initial ${config.displayName} OAuth/proxy state`)
+      ctx.logger.warn(error)
+    })
+    return () => { live = false }
+  }, `oauth-model-provider: initial ${config.route} credential/proxy state`)
+
+  ctx.on('credentials/updated', (ref) => {
+    if (ref === config.proxyCredentialRef) {
+      void proxy.refresh().catch((error: unknown) => {
+        ctx.logger.warn(`oauth-model-provider: could not refresh ${config.displayName} proxy state`)
+        ctx.logger.warn(error)
+      })
+      return
+    }
+    if (ref !== config.credentialRef) return
     void store.read(spec.authProviderId).then(
-      (stored) => {
-        if (live && availabilityRevision === bootstrapRevision && stored?.type === 'oauth') {
-          registration.replace([config.route])
-        }
-      },
-      (error) => {
-        if (!live) return
-        ctx.logger.warn(`oauth-model-provider: could not read initial ${config.displayName} OAuth state`)
+      stored => { setAvailable(stored?.type === 'oauth') },
+      (error: unknown) => {
+        ctx.logger.warn(`oauth-model-provider: could not refresh ${config.displayName} OAuth state`)
         ctx.logger.warn(error)
       },
     )
-    return () => { live = false }
-  }, `oauth-model-provider: initial ${config.route} credential state`)
+  })
+
+  installBrowserOAuth(
+    ctx,
+    authModels,
+    store,
+    proxy,
+    spec.authProviderId,
+    config.displayName,
+    config.route,
+    setAvailable,
+  )
 
   installOAuthCommands(
     ctx,

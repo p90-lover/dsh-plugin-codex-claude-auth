@@ -5,7 +5,7 @@
 - `openai-codex-oauth` — 以 ChatGPT 訂閱帳號登入並使用 OpenAI Codex 模型。
 - `anthropic-oauth` — 以 Claude Pro/Max 帳號登入並使用 Anthropic Claude 模型。
 
-此組合包使用 DeepSeek Harness 的命令、提問介面、模型路由與持久憑證參照服務。OAuth 登入與更新由 `@earendil-works/pi-ai` 提供；模型清單也直接取自該套件，而不是在本專案中寫死。
+此組合包使用 DeepSeek Harness 的模型路由、同來源設定精靈與持久憑證參照服務。OAuth 登入與更新由 `@earendil-works/pi-ai` 提供；模型清單也直接取自該套件，而不是在本專案中寫死。
 
 ## 相容版本
 
@@ -20,7 +20,7 @@ DeepSeek Harness 目前仍是開發者預覽版。請鎖定以上版本，並預
 將打包檔安裝到 Web profile：
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.2.4.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.3.2.tgz
 dsh --profile web
 ```
 
@@ -39,11 +39,14 @@ dsh plugin --profile web add .
 在 Harness Web 中：
 
 1. 開啟 **設定 → OAuth 提供者**。
-2. 點選 **新增 Codex OAuth** 或 **新增 Claude OAuth**。如果尚未開啟聊天，Harness 會自動建立一個；接著設定頁會關閉，安全流程會在該聊天中繼續。
-3. 依照 Harness 提問介面顯示的瀏覽器網址或裝置碼完成授權。
-4. 登入成功後，提供者及其模型會自動出現在模型選擇器。
+2. 可選擇為個別提供者設定 HTTP(S) 代理伺服器。機密網址只會寫入 Harness 憑證儲存區。
+3. 點選 **新增 Codex OAuth** 或 **新增 Claude OAuth**，直接在提供者卡片內完成步驟；不需要指令、聊天或 Harness 提問浮層。
+4. 開啟提供者登入頁。卡片會輪詢主機端流程，並自動偵測本機 OAuth 回呼（Codex 使用 `localhost:1455`，Claude 使用 `localhost:53692`）。仍可在失敗時手動貼上返回網址或授權碼。
+5. 登入成功後，提供者及其模型會自動出現在模型選擇器。
 
-也可以直接在對話輸入框使用 `/login-openai`、`/login-claude`、`/status-openai` 與 `/status-claude`。
+此設定區頂端可切換 English / 繁體中文；此外掛頁面預設使用英文。
+
+舊有的 `/login-openai`、`/login-claude`、`/status-openai` 與 `/status-claude` 指令仍保留作為相容備援，但設定流程不會呼叫它們。
 
 可以在同一個設定頁按 **中斷連線**，或執行 `/logout-openai` 與 `/logout-claude`。登出會移除本機儲存的授權資料，並從模型選擇器隱藏該提供者；它不保證撤銷遠端授權，若有需要，請在提供者帳號中另外撤銷。
 
@@ -53,10 +56,18 @@ dsh plugin --profile web add .
 
 - OpenAI：`DSH_OPENAI_CODEX_OAUTH`
 - Anthropic：`DSH_ANTHROPIC_OAUTH`
+- OpenAI 代理：`DSH_OPENAI_CODEX_PROXY`
+- Anthropic 代理：`DSH_ANTHROPIC_PROXY`
 
 使用標準本機憑證提供者時，這些參照會儲存在 `$DSH_HOME` 下的 Harness 憑證存放區。狀態命令只會顯示登入與到期狀態，絕不顯示權杖內容。同一個 Harness 程序中的更新寫入會依序執行。
 
-請勿把 `.credentials.yaml`、含重新導向網址的紀錄，或已登入的 Harness home 提交到版本控制。
+請勿把 `.credentials.yaml`、含重新導向網址或代理網址的紀錄，以及已登入的 Harness home 提交到版本控制。OAuth 回呼網址含有短效授權碼，應視為機密。
+
+## 代理行為
+
+每個提供者都能使用不同的 HTTP 或 HTTPS 正向代理。外掛以非同步範圍隔離的 fetch dispatcher，將 OAuth 權杖交換／更新及模型請求送入該代理。設定代理後，模型傳輸會強制使用 SSE，確保請求維持在個別提供者的 HTTP 代理路徑。SOCKS 與 PAC 網址會被拒絕。
+
+外部登入網站是由瀏覽器開啟，因此該頁面仍使用瀏覽器本身的代理／網路設定。外掛代理只涵蓋 DSH 主機流量，不會暗中變更瀏覽器或 Windows 設定。
 
 ## 設定
 
@@ -68,6 +79,7 @@ dsh plugin --profile web add .
     route: openai-codex-oauth
     displayName: OpenAI Codex (OAuth)
     credentialRef: DSH_OPENAI_CODEX_OAUTH
+    proxyCredentialRef: DSH_OPENAI_CODEX_PROXY
     loginCommand: login-openai
     statusCommand: status-openai
     logoutCommand: logout-openai
@@ -78,6 +90,7 @@ dsh plugin --profile web add .
     route: anthropic-oauth
     displayName: Anthropic Claude (OAuth)
     credentialRef: DSH_ANTHROPIC_OAUTH
+    proxyCredentialRef: DSH_ANTHROPIC_PROXY
     loginCommand: login-claude
     statusCommand: status-claude
     logoutCommand: logout-claude
@@ -93,6 +106,7 @@ dsh plugin --profile web add .
 - 這些消費者 OAuth 流程並未被文件化為穩定、通用的第三方整合合約；提供者政策或通訊協定變更都可能使其失效。使用前請確認適用的提供者條款；正式環境整合建議使用官方 API 憑證。
 - 更新序列化只限單一程序。請勿讓多個 Harness 程序共用同一個 OAuth 憑證參照，否則輪替 refresh token 時可能跨程序競爭。
 - 測試套件刻意不自動操作真實帳號登入。請在自己的 profile 內互動完成每個登入流程，並實際驗證一次模型請求。
+- 代理設定檢查成功不等於模型請求已完成；OAuth 成功後仍應驗證一次真實模型請求。
 
 ## 開發檢查
 
@@ -102,4 +116,4 @@ pnpm test
 pnpm run build
 ```
 
-聚焦測試涵蓋：不洩漏機密的憑證中繼資料、依序執行的更新操作，以及路由轉送時保留上游提供者識別。
+聚焦測試涵蓋：不洩漏機密的憑證中繼資料、依序執行的更新操作、上游路由識別、自動回呼狀態完成、代理網址遮蔽，以及個別提供者的代理串流選項。

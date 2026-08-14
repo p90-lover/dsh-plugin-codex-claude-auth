@@ -8,6 +8,7 @@ const DEFAULTS: OAuthProviderDefaults = {
   route: 'anthropic-oauth',
   displayName: 'Anthropic Claude (OAuth)',
   credentialRef: 'DSH_ANTHROPIC_OAUTH',
+  proxyCredentialRef: 'DSH_ANTHROPIC_PROXY',
   loginCommand: 'login-claude',
   statusCommand: 'status-claude',
   logoutCommand: 'logout-claude',

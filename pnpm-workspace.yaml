@@ -1,3 +1,6 @@
+allowBuilds:
+  '@google/genai': set this to true or false
+  protobufjs: set this to true or false
 minimumReleaseAgeExclude:
   - '@deepseek-ai/cordis@4.0.1'
   - '@deepseek-ai/cosmokit@1.8.2'

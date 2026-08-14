@@ -8,6 +8,7 @@ const DEFAULTS: OAuthProviderDefaults = {
   route: 'openai-codex-oauth',
   displayName: 'OpenAI Codex (OAuth)',
   credentialRef: 'DSH_OPENAI_CODEX_OAUTH',
+  proxyCredentialRef: 'DSH_OPENAI_CODEX_PROXY',
   loginCommand: 'login-openai',
   statusCommand: 'status-openai',
   logoutCommand: 'logout-openai',

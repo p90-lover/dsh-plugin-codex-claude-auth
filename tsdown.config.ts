@@ -29,7 +29,7 @@ export default defineConfig([
     fixedExtension: false,
     dts: true,
     clean: false,
-    external: [/^@deepseek-ai\//u, /^@earendil-works\//u],
+    external: [/^@deepseek-ai\//u, /^@earendil-works\//u, 'undici'],
   },
   {
     name: 'dsh-oauth-model-providers/client',

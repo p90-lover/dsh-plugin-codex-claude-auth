@@ -5,7 +5,7 @@ An experimental DeepSeek Harness bundle that adds two independent LLM routes:
 - `openai-codex-oauth` — OpenAI Codex models authenticated with a ChatGPT subscription login.
 - `anthropic-oauth` — Anthropic Claude models authenticated with a Claude Pro/Max login.
 
-The bundle uses DeepSeek Harness services for commands, questions, model routing, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`; model lists come from that package instead of being hard-coded here.
+The bundle uses DeepSeek Harness services for model routing, a same-origin Settings wizard, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`; model lists come from that package instead of being hard-coded here.
 
 ## Compatibility
 
@@ -20,7 +20,7 @@ DeepSeek Harness is currently a developer preview. Pin the versions above and ex
 Install the packed bundle into a Web profile:
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.2.4.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.3.2.tgz
 dsh --profile web
 ```
 
@@ -39,11 +39,14 @@ The bundle inserts both routes. It does not replace the built-in API-key provide
 In Harness Web:
 
 1. Open **Settings → OAuth Providers**.
-2. Click **Add Codex OAuth** or **Add Claude OAuth**. If no chat is open, Harness creates one automatically; Settings then closes and the secure flow continues there.
-3. Follow the browser URL/device-code prompts in the Harness question UI.
-4. After sign-in succeeds, the provider and its models appear automatically in the model picker.
+2. Optionally set a provider-specific HTTP(S) proxy. The secret URL is write-only in the Harness credential store.
+3. Click **Add Codex OAuth** or **Add Claude OAuth** and complete the steps inside the provider card. No command, chat, or Harness question overlay is required.
+4. Open the provider sign-in page. The card polls the host-owned flow and automatically detects the local OAuth callback (`localhost:1455` for Codex or `localhost:53692` for Claude). Pasting the returned URL/code remains available as a fallback.
+5. After sign-in succeeds, the provider and its models appear automatically in the model picker.
 
-The conversation composer also accepts `/login-openai`, `/login-claude`, `/status-openai`, and `/status-claude` as direct alternatives.
+Use the English / 繁體中文 selector at the top of this section; English is the default for this plugin page.
+
+The legacy `/login-openai`, `/login-claude`, `/status-openai`, and `/status-claude` commands remain available as optional compatibility fallbacks, but the Settings flow does not invoke them.
 
 Use **Disconnect** on the same Settings page, or run `/logout-openai` or `/logout-claude`. Logout removes the locally stored grant and hides that provider from the model picker; it does not promise remote revocation. Revoke the grant in the provider account when that matters.
 
@@ -53,10 +56,18 @@ Tokens are serialized as one JSON secret per provider through the Harness creden
 
 - OpenAI: `DSH_OPENAI_CODEX_OAUTH`
 - Anthropic: `DSH_ANTHROPIC_OAUTH`
+- OpenAI proxy: `DSH_OPENAI_CODEX_PROXY`
+- Anthropic proxy: `DSH_ANTHROPIC_PROXY`
 
 With the standard local credentials provider, those references live in the Harness credentials store under `$DSH_HOME`. The status command exposes only sign-in and expiry state, never token contents. Refresh writes are serialized within one Harness process.
 
-Do not copy `.credentials.yaml`, logs containing redirect URLs, or a populated Harness home into source control.
+Do not copy `.credentials.yaml`, logs containing redirect URLs, proxy URLs, or a populated Harness home into source control. OAuth callback URLs contain short-lived authorization codes and should be treated as secrets.
+
+## Proxy behavior
+
+Each provider can use a different HTTP or HTTPS forward proxy. The proxy is applied with an async-scoped fetch dispatcher to OAuth token exchange/refresh and model requests. When a proxy is configured, model transport is forced to SSE so the request remains on the per-provider HTTP proxy path. SOCKS and PAC URLs are rejected.
+
+The external sign-in website is opened by your browser, so that page still follows the browser's own proxy/network settings. The plugin proxy covers DSH host traffic; it does not silently reconfigure the browser or Windows.
 
 ## Configuration
 
@@ -68,6 +79,7 @@ The inserted Cordis row ids are `llm-openai-codex-oauth` and `llm-anthropic-oaut
     route: openai-codex-oauth
     displayName: OpenAI Codex (OAuth)
     credentialRef: DSH_OPENAI_CODEX_OAUTH
+    proxyCredentialRef: DSH_OPENAI_CODEX_PROXY
     loginCommand: login-openai
     statusCommand: status-openai
     logoutCommand: logout-openai
@@ -78,6 +90,7 @@ The inserted Cordis row ids are `llm-openai-codex-oauth` and `llm-anthropic-oaut
     route: anthropic-oauth
     displayName: Anthropic Claude (OAuth)
     credentialRef: DSH_ANTHROPIC_OAUTH
+    proxyCredentialRef: DSH_ANTHROPIC_PROXY
     loginCommand: login-claude
     statusCommand: status-claude
     logoutCommand: logout-claude
@@ -93,6 +106,7 @@ Optional transport controls are `transport`, `timeoutMs`, `websocketConnectTimeo
 - These consumer OAuth flows are not documented as a stable, general-purpose third-party integration contract. Provider-side policy or protocol changes can break them. Check the applicable provider terms before use; prefer official API credentials for production integrations.
 - Refresh serialization is process-local. Do not run multiple Harness processes against the same OAuth credential reference, because rotating refresh tokens can race across processes.
 - A real account login was deliberately not automated by the test suite. Complete each login interactively and verify one model request in your own profile.
+- A successful proxy setup check is not proof of a completed model request. Verify one real request after OAuth succeeds.
 
 ## Development checks
 
@@ -102,4 +116,4 @@ pnpm test
 pnpm run build
 ```
 
-The focused tests cover secret-safe credential metadata, serialized refresh mutations, and preservation of the upstream provider identity during routed dispatch.
+The focused tests cover secret-safe credential metadata, serialized refresh mutations, upstream route identity, direct callback-state completion, proxy URL redaction, and per-provider proxy stream options.

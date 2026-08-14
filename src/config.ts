@@ -14,6 +14,7 @@ export interface OAuthProviderDefaults {
   route: string
   displayName: string
   credentialRef: string
+  proxyCredentialRef: string
   loginCommand: string
   statusCommand: string
   logoutCommand: string
@@ -24,6 +25,7 @@ export interface OAuthProviderConfig {
   route?: string
   displayName?: string
   credentialRef?: string
+  proxyCredentialRef?: string
   loginCommand?: string
   statusCommand?: string
   logoutCommand?: string
@@ -39,6 +41,7 @@ export interface ResolvedOAuthProviderConfig {
   route: string
   displayName: string
   credentialRef: CredentialRef
+  proxyCredentialRef: CredentialRef
   loginCommand: string
   statusCommand: string
   logoutCommand: string
@@ -55,6 +58,7 @@ export function oauthProviderConfig(defaults: OAuthProviderDefaults): z<OAuthPro
     route: z.string().default(defaults.route),
     displayName: z.string().default(defaults.displayName),
     credentialRef: z.string().role('credential-ref').default(defaults.credentialRef),
+    proxyCredentialRef: z.string().role('credential-ref').default(defaults.proxyCredentialRef),
     loginCommand: z.string().default(defaults.loginCommand),
     statusCommand: z.string().default(defaults.statusCommand),
     logoutCommand: z.string().default(defaults.logoutCommand),
@@ -91,6 +95,14 @@ export function resolveOAuthProviderConfig(
   const route = required(source.route, defaults.route, 'route')
   const displayName = required(source.displayName, defaults.displayName, 'displayName')
   const credentialName = required(source.credentialRef, defaults.credentialRef, 'credentialRef')
+  const proxyCredentialName = required(
+    source.proxyCredentialRef,
+    defaults.proxyCredentialRef,
+    'proxyCredentialRef',
+  )
+  if (credentialName === proxyCredentialName) {
+    throw new Error('oauth-model-provider: credentialRef and proxyCredentialRef must be distinct')
+  }
   const streamIdleTimeoutMs = source.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS
   if (!Number.isFinite(streamIdleTimeoutMs)
     || streamIdleTimeoutMs <= 0
@@ -109,6 +121,7 @@ export function resolveOAuthProviderConfig(
     route,
     displayName,
     credentialRef: credentialRef(credentialName),
+    proxyCredentialRef: credentialRef(proxyCredentialName),
     loginCommand,
     statusCommand,
     logoutCommand,
