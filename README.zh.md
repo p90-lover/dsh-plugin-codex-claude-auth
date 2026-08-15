@@ -7,6 +7,12 @@
 
 此組合包使用 DeepSeek Harness 的模型路由、同來源設定精靈與持久憑證參照服務。OAuth 登入與更新由 `@earendil-works/pi-ai` 提供。登入後，外掛會取得該帳號由提供者回傳的模型清單，並保留 `pi-ai` 內建清單作為離線或失敗時的備援。
 
+## 0.6.1 新增功能
+
+- 輸入框新增僅限 OpenAI 的 **自動審查**。預設開啟並由瀏覽器記住選擇；只會在新的 OpenAI Codex 回合完成後執行，會略過審查本身的回合，且不會重複審查相同的工作樹狀態。
+- OAuth 設定頁的註冊不再依賴選用的命令 Remote，因此命令通道重新連線時不會卸載提供者頁面。
+- 明確涵蓋端對端 DSH 工具呼叫相容性：工具結構、串流呼叫、`call_id`、工具結果及重播狀態都會完整通過公開 OAuth 路由。
+
 ## 0.6.0 新增功能
 
 - OpenAI OAuth 遠端壓縮：使用單次回應的 `/codex/responses/compact` 端點，將回傳的不透明項目原樣保留給下一次請求；若預覽端點無法使用，會退回 DSH 的本機摘要壓縮。
@@ -26,7 +32,7 @@ DeepSeek Harness 目前仍是開發者預覽版。請鎖定以上版本，並預
 將打包檔安裝到 Web profile：
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.6.0.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.6.1.tgz
 dsh --profile web
 ```
 
@@ -69,7 +75,11 @@ dsh plugin --profile web add .
 /review custom 僅檢查安全性與資料遺失問題
 ```
 
-審查會排入一個專用模型回合。P0-P3 發現，或 `No actionable findings.`，會永久保留在聊天記錄中。
+**自動審查**預設開啟，且選擇會由瀏覽器記住。新的 OpenAI Codex 回合完成後，只有工作樹指紋尚未審查時才會啟動；乾淨工作樹、未變更的差異、Claude 回合及審查本身的回合都會略過。審查會排入一個專用模型回合。P0-P3 發現，或 `No actionable findings.`，會永久保留在聊天記錄中。
+
+## DSH 內的 Codex 工具呼叫
+
+OpenAI OAuth 路由使用 DSH 原有的工具執行環境。DSH 函式結構會傳入 Codex Responses 請求；串流工具呼叫會保留名稱、參數與 `call_id`；DSH 執行工具後，相關聯的結果及重播中繼資料會在下一個模型步驟送回。路由包裝器會把持久提供者識別統一成 `openai-codex-oauth`，避免先前上游／公開提供者不一致所造成的 `INVALID_REPLAY_STATE`。
 
 可以在同一個設定頁按 **中斷連線**，或執行 `/logout-openai` 與 `/logout-claude`。登出會移除本機儲存的授權資料，並從模型選擇器隱藏該提供者；它不保證撤銷遠端授權，若有需要，請在提供者帳號中另外撤銷。
 
@@ -124,8 +134,8 @@ pnpm test
 pnpm run build
 ```
 
-聚焦測試涵蓋：遠端壓縮請求與還原行為、唯讀審查合約、不洩漏機密的憑證中繼資料、依序執行的更新操作、重播路由相容性、已驗證模型清單的解析與備援、已儲存憑證的回呼狀態校正、代理網址遮蔽，以及個別提供者的代理串流選項。
+聚焦測試涵蓋：遠端壓縮請求與還原行為、自動及手動唯讀審查合約、Codex 工具定義／呼叫／結果識別、不洩漏機密的憑證中繼資料、依序執行的更新操作、重播路由相容性、已驗證模型清單的解析與備援、已儲存憑證的回呼狀態校正、代理網址遮蔽，以及個別提供者的代理串流選項。
 
 ## 授權條款
 
-本專案依 [PolyForm Noncommercial License 1.0.0](LICENSE) 以 source-available 方式提供。該授權不允許商業用途或預期將用於商業的用途，且不是 OSI 認可的開放原始碼授權。
+任何人都可以下載原始碼，並依 [PolyForm Noncommercial License 1.0.0](LICENSE) 在允許的非商業範圍內使用、研究、修改及重新散布。商業用途或預期將用於商業的用途，必須另外向著作權持有人取得商業授權。本專案不套用 MIT，因為 MIT 授權允許商業使用。PolyForm Noncommercial 屬於 source-available，而不是 OSI 認可的開放原始碼授權。

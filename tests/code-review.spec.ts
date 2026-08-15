@@ -4,6 +4,7 @@ import { buildReviewPrompt, parseReviewScope } from '../src/code-review.ts'
 describe('Codex-style code review', () => {
   it('parses supported scopes and keeps the generated workflow read-only', () => {
     expect(parseReviewScope('')).toEqual({ kind: 'uncommitted' })
+    expect(parseReviewScope('auto')).toEqual({ kind: 'auto' })
     expect(parseReviewScope('base main')).toEqual({ kind: 'base', revision: 'main' })
     expect(parseReviewScope('commit HEAD~1')).toEqual({ kind: 'commit', revision: 'HEAD~1' })
     expect(parseReviewScope('security and data loss only')).toEqual({

@@ -119,10 +119,14 @@ const en = {
   saveClaudeUsage: 'Save Claude usage',
   codexFeatures: 'Codex workflow features',
   remoteCompaction: 'Remote compaction is automatic for OpenAI OAuth. If the preview endpoint is unavailable, DSH safely falls back to its local summary compaction.',
-  codeReviewHelp: 'Use the Code review button in the composer (or /review) for a dedicated read-only review whose findings stay in chat.',
+  codeReviewHelp: 'Use Code review for a dedicated read-only review, or leave Auto review enabled to review only new OpenAI changes. Findings stay in chat.',
+  toolCallingHelp: 'DSH tool definitions, streamed calls, call IDs, results, and replay history are preserved end to end for OpenAI Codex.',
   codeReview: 'Code review',
   codeReviewTitle: 'Review uncommitted changes without modifying files',
   codeReviewFailed: 'Code review could not start',
+  autoCodeReviewOn: 'Auto review: On',
+  autoCodeReviewOff: 'Auto review: Off',
+  autoCodeReviewTitle: 'Automatically review new uncommitted changes after an OpenAI Codex turn',
 }
 
 const zh: { [Key in keyof typeof en]: string } = {
@@ -139,10 +143,14 @@ const zh: { [Key in keyof typeof en]: string } = {
   saveClaudeUsage: '儲存 Claude 用量',
   codexFeatures: 'Codex 工作流程功能',
   remoteCompaction: 'OpenAI OAuth 會自動使用遠端壓縮。若預覽端點無法使用，DSH 會安全地退回本機摘要壓縮。',
-  codeReviewHelp: '使用輸入框中的「程式碼審查」按鈕（或 /review）執行專用唯讀審查，結果會永久保留在聊天中。',
+  codeReviewHelp: '使用「程式碼審查」執行專用唯讀審查，或保持「自動審查」開啟，只審查新的 OpenAI 變更；結果會保留在聊天中。',
+  toolCallingHelp: 'OpenAI Codex 會端對端保留 DSH 工具定義、串流呼叫、呼叫 ID、工具結果與重播記錄。',
   codeReview: '程式碼審查',
   codeReviewTitle: '審查未提交變更，不修改任何檔案',
   codeReviewFailed: '無法啟動程式碼審查',
+  autoCodeReviewOn: '自動審查：開啟',
+  autoCodeReviewOff: '自動審查：關閉',
+  autoCodeReviewTitle: 'OpenAI Codex 回合完成後，自動審查新的未提交變更',
 }
 
 type OAuthSettingsKey = keyof typeof en
@@ -641,6 +649,7 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
                       <span style={nameStyle}>{format(copy, 'codexFeatures')}</span>
                       <p style={detail}>{format(copy, 'remoteCompaction')}</p>
                       <p style={detail}>{format(copy, 'codeReviewHelp')}</p>
+                      <p style={detail}>{format(copy, 'toolCallingHelp')}</p>
                     </div>
                   )
                 : null}
@@ -796,36 +805,85 @@ function postJson<T>(provider: ProviderCard, action: string, body: Record<string
   })
 }
 
+interface ReviewRunResult {
+  started: boolean
+  error: string | null
+}
+
 interface ReviewButtonInjected {
-  runReview(): Promise<string | null>
+  runReview(mode: 'manual' | 'auto'): Promise<ReviewRunResult>
 }
 
 type ReviewButtonProps = PropsRuntime<'conversation.input.left'>
   & PropsLocale<typeof NS>
   & InjectFace<ReviewButtonInjected>
 
-function ReviewButton({ input, runReview, t }: ReviewButtonProps): ReactNode {
+const AUTO_REVIEW_STORAGE_KEY = 'dsh.oauthModelProviders.autoCodeReview'
+
+function latestCompletion(session: ReviewButtonProps['session']): { turn: number; seq: number } | undefined {
+  let latest: { turn: number; seq: number } | undefined
+  for (const [turn, seq] of session.turnEnds) {
+    if (latest === undefined || seq > latest.seq) latest = { turn, seq }
+  }
+  return latest
+}
+
+function completedTurnProvider(
+  session: ReviewButtonProps['session'],
+  turn: number,
+): string | undefined {
+  for (let index = session.nodes.length - 1; index >= 0; index--) {
+    const node = session.nodes[index]
+    if (node?.kind === 'assistant' && node.messageId !== undefined && node.turn === turn) {
+      return node.provenance?.provider
+    }
+  }
+  return undefined
+}
+
+function ReviewButton({ input, session, runReview, t }: ReviewButtonProps): ReactNode {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [autoReview, setAutoReview] = useState(() => {
+    try { return localStorage.getItem(AUTO_REVIEW_STORAGE_KEY) !== 'false' } catch { return true }
+  })
   const mounted = useRef(true)
+  const processedTurnEnd = useRef(latestCompletion(session)?.seq)
+  const skipNextCompletion = useRef(false)
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false }
   }, [])
+  useEffect(() => {
+    try { localStorage.setItem(AUTO_REVIEW_STORAGE_KEY, String(autoReview)) } catch { /* storage may be disabled */ }
+  }, [autoReview])
 
-  const start = (): void => {
+  const start = useCallback((mode: 'manual' | 'auto'): void => {
     setRunning(true)
     setError(null)
-    void runReview().then((failure) => {
+    void runReview(mode).then((result) => {
       if (!mounted.current) return
       setRunning(false)
-      setError(failure)
+      if (result.started) skipNextCompletion.current = true
+      setError(result.error)
     }, (reason: unknown) => {
       if (!mounted.current) return
       setRunning(false)
       setError(reason instanceof Error ? reason.message : String(reason))
     })
-  }
+  }, [runReview])
+
+  useEffect(() => {
+    if (session.running) return
+    const completed = latestCompletion(session)
+    if (completed === undefined || completed.seq === processedTurnEnd.current) return
+    processedTurnEnd.current = completed.seq
+    if (skipNextCompletion.current) {
+      skipNextCompletion.current = false
+      return
+    }
+    if (autoReview && completedTurnProvider(session, completed.turn) === 'openai-codex-oauth') start('auto')
+  }, [autoReview, session, start])
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -835,9 +893,19 @@ function ReviewButton({ input, runReview, t }: ReviewButtonProps): ReactNode {
         disabled={running || input.phase === 'submitting'}
         title={t('codeReviewTitle')}
         aria-label={t('codeReviewTitle')}
-        onClick={start}
+        onClick={() => { start('manual') }}
       >
         {t('codeReview')}
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        aria-pressed={autoReview}
+        title={t('autoCodeReviewTitle')}
+        aria-label={t('autoCodeReviewTitle')}
+        onClick={() => { setAutoReview(value => !value) }}
+      >
+        {t(autoReview ? 'autoCodeReviewOn' : 'autoCodeReviewOff')}
       </Button>
       {error === null
         ? null
@@ -846,7 +914,7 @@ function ReviewButton({ input, runReview, t }: ReviewButtonProps): ReactNode {
   )
 }
 
-export const inject = ['slots', 'locale', 'remote', 'remote.commands']
+export const inject = ['slots', 'locale', 'remote']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'oauth-model-providers: Settings dictionaries')
@@ -913,19 +981,30 @@ export function apply(ctx: ClientContext): void {
     inject: injected,
   }, OAuthSettingsSection))
 
-  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-    name: 'conversation.input.left',
-    id: 'codex-code-review',
-    order: 35,
-    label: () => ctx.locale.bind(NS)('codeReview'),
-    locale: NS,
-    inject: (sessionId) => ({
-      runReview: async (): Promise<string | null> => {
-        const result = await ctx.remote.commands.execute(sessionId, '/review')
-        if (!result.ok) return `${result.error.message} (${result.error.code})`
-        if (result.value === undefined) return 'Unknown command: /review'
-        return result.value.result.kind === 'error' ? result.value.result.text : null
-      },
-    }),
-  }, ReviewButton))
+  ctx.inject(['remote.commands'], (reviewCtx) => {
+    reviewCtx.slots.inject('conversation.input.left', () => reviewCtx.slots.register({
+      name: 'conversation.input.left',
+      id: 'codex-code-review',
+      order: 35,
+      label: () => reviewCtx.locale.bind(NS)('codeReview'),
+      locale: NS,
+      inject: (sessionId) => ({
+        runReview: async (mode: 'manual' | 'auto'): Promise<ReviewRunResult> => {
+          const result = await reviewCtx.remote.commands.execute(
+            sessionId,
+            mode === 'auto' ? '/review auto' : '/review',
+          )
+          if (!result.ok) return { started: false, error: `${result.error.message} (${result.error.code})` }
+          if (result.value === undefined) return { started: false, error: 'Unknown command: /review' }
+          if (result.value.result.kind === 'error') {
+            return { started: false, error: result.value.result.text ?? 'Code review failed' }
+          }
+          return {
+            started: result.value.result.text?.startsWith('Code review started') === true,
+            error: null,
+          }
+        },
+      }),
+    }, ReviewButton))
+  })
 }

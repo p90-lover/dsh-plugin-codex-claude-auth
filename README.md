@@ -7,6 +7,12 @@ An experimental DeepSeek Harness bundle that adds two independent LLM routes:
 
 The bundle uses DeepSeek Harness services for model routing, a same-origin Settings wizard, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`. After sign-in, the plugin fetches the account's provider-owned model catalog and keeps the bundled `pi-ai` catalog as an offline/failure fallback.
 
+## Version 0.6.1 additions
+
+- OpenAI-only **Auto review** in the composer. It is enabled by default, remembered in the browser, runs only after a newly completed OpenAI Codex turn, skips its own reviewer turn, and deduplicates unchanged working-tree state.
+- The OAuth Settings registration no longer depends on the optional command Remote, so a command-channel reconnect cannot unmount the provider page.
+- End-to-end DSH tool-call compatibility is covered explicitly: tool schemas, streamed calls, `call_id` values, tool results, and replay state remain intact through the public OAuth route.
+
 ## Version 0.6.0 additions
 
 - OpenAI OAuth remote compaction through the unary `/codex/responses/compact` endpoint. The plugin preserves the returned opaque items unchanged for the next request and falls back to DSH's local summary compaction when the preview endpoint is unavailable.
@@ -35,7 +41,7 @@ DeepSeek Harness is currently a developer preview. Pin the versions above and ex
 Install the packed bundle into a Web profile:
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.6.0.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.6.1.tgz
 dsh --profile web
 ```
 
@@ -78,7 +84,11 @@ Click **Code review** in the composer to review staged, unstaged, and untracked 
 /review custom security and data-loss issues only
 ```
 
-The review is queued as a dedicated model turn. Its P0-P3 findings, or `No actionable findings.`, remain in the chat transcript.
+**Auto review** is enabled by default and remembered in the browser. After a newly completed OpenAI Codex turn, it starts a review only when the working-tree fingerprint is new. It skips clean trees, unchanged diffs, Claude turns, and the review turn itself. The review is queued as a dedicated model turn. Its P0-P3 findings, or `No actionable findings.`, remain in the chat transcript.
+
+## Codex tool calls inside DSH
+
+The OpenAI OAuth route uses DSH's normal tool runtime. DSH function schemas are passed to the Codex Responses request; streamed tool calls retain their names, arguments, and `call_id`; DSH executes the tools; and the linked results plus replay metadata are sent back on the next model step. The route wrapper normalizes the durable provider identity to `openai-codex-oauth`, preventing the upstream/public-provider mismatch that previously produced `INVALID_REPLAY_STATE`.
 
 Use **Disconnect** on the same Settings page, or run `/logout-openai` or `/logout-claude`. Logout removes the locally stored grant and hides that provider from the model picker; it does not promise remote revocation. Revoke the grant in the provider account when that matters.
 
@@ -133,8 +143,8 @@ pnpm test
 pnpm run build
 ```
 
-The focused tests cover remote compaction request/restore behavior, the read-only review contract, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, proxy URL redaction, and per-provider proxy stream options.
+The focused tests cover remote compaction request/restore behavior, automatic and manual read-only review contracts, Codex tool definition/call/result identity, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, proxy URL redaction, and per-provider proxy stream options.
 
 ## License
 
-This project is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial or anticipated commercial use is not permitted by that license. It is not an OSI-approved open-source license.
+Anyone may download the source and use, study, modify, and redistribute it for permitted noncommercial purposes under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial or anticipated commercial use requires a separate commercial license from the copyright holder. MIT is not applied because the MIT License permits commercial use. PolyForm Noncommercial is source-available, not an OSI-approved open-source license.

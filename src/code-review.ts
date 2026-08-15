@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-commands'
@@ -9,6 +12,7 @@ const REVISION_PATTERN = /^[A-Za-z0-9._/@{}~^:+-]+$/u
 
 export type ReviewScope =
   | { kind: 'uncommitted' }
+  | { kind: 'auto' }
   | { kind: 'base', revision: string }
   | { kind: 'commit', revision: string }
   | { kind: 'custom', instructions: string }
@@ -17,6 +21,7 @@ export type ReviewScope =
 export const REVIEW_USAGE = [
   'Code review usage:',
   '/review — staged, unstaged, and untracked changes',
+  '/review auto — review only when the working tree changed since the last review',
   '/review base <branch> — changes from the merge base to HEAD',
   '/review commit <revision> — one exact commit',
   '/review custom <instructions> — uncommitted changes with extra review criteria',
@@ -26,6 +31,7 @@ export const REVIEW_USAGE = [
 export function parseReviewScope(rawInput: string): ReviewScope {
   const input = rawInput.trim()
   if (input.length === 0 || input === 'uncommitted') return { kind: 'uncommitted' }
+  if (input === 'auto') return { kind: 'auto' }
   if (input === 'help') return { kind: 'help' }
 
   const [kind, ...parts] = input.split(/\s+/u)
@@ -46,6 +52,7 @@ export function parseReviewScope(rawInput: string): ReviewScope {
 function scopeInstructions(scope: Exclude<ReviewScope, { kind: 'help' }>): string {
   switch (scope.kind) {
     case 'uncommitted':
+    case 'auto':
       return [
         'Review all local work that is not in HEAD.',
         'Inspect staged changes, unstaged changes, and untracked files. Use git status and the appropriate git diff commands.',
@@ -87,25 +94,57 @@ export function buildReviewPrompt(scope: Exclude<ReviewScope, { kind: 'help' }>,
 }
 
 function scopeLabel(scope: Exclude<ReviewScope, { kind: 'help' }>): string {
+  if (scope.kind === 'auto') return 'new uncommitted changes (automatic)'
   if (scope.kind === 'uncommitted') return 'uncommitted changes'
   if (scope.kind === 'custom') return 'uncommitted changes with custom criteria'
   return `${scope.kind} ${scope.revision}`
 }
 
-async function assertGitRepository(cwd: string, signal: AbortSignal): Promise<void> {
+async function gitOutput(cwd: string, args: readonly string[], signal: AbortSignal): Promise<string> {
+  const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
+    encoding: 'utf8',
+    windowsHide: true,
+    signal,
+    timeout: 10_000,
+  })
+  return stdout
+}
+
+async function assertGitRepository(cwd: string, signal: AbortSignal): Promise<string> {
   try {
-    await execFileAsync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
-      windowsHide: true,
-      signal,
-      timeout: 10_000,
-    })
+    return (await gitOutput(cwd, ['rev-parse', '--show-toplevel'], signal)).trim()
   } catch {
     throw new Error(`Code review requires a Git repository workspace. Current workspace: ${cwd}`)
   }
 }
 
+async function workingTreeFingerprint(root: string, signal: AbortSignal): Promise<string | undefined> {
+  const status = await gitOutput(root, ['status', '--porcelain=v1', '--untracked-files=all'], signal)
+  if (status.trim().length === 0) return undefined
+
+  const [diff, untrackedOutput] = await Promise.all([
+    gitOutput(root, ['diff', '--binary', 'HEAD', '--'], signal),
+    gitOutput(root, ['ls-files', '--others', '--exclude-standard', '-z'], signal),
+  ])
+  const hash = createHash('sha256').update(status).update('\0').update(diff)
+  const untracked = untrackedOutput.split('\0').filter(Boolean).sort()
+  for (const name of untracked) {
+    const path = resolve(root, name)
+    const local = relative(root, path)
+    if (local.startsWith('..') || isAbsolute(local)) continue
+    hash.update('\0').update(name).update('\0')
+    try {
+      hash.update(await readFile(path))
+    } catch {
+      hash.update('<unreadable>')
+    }
+  }
+  return hash.digest('hex')
+}
+
 /** Register the read-only Codex-style /review workflow once. */
 export function installCodeReview(ctx: Context): void {
+  const reviewedFingerprints = new Map<string, string>()
   ctx.inject(['commands'], (commandCtx) => {
     commandCtx.commands.register({
       name: 'review',
@@ -124,14 +163,34 @@ export function installCodeReview(ctx: Context): void {
         if (cwd === undefined) {
           return { kind: 'error', text: 'Code review requires a session with a workspace directory.' }
         }
+        let root: string
         try {
-          await assertGitRepository(cwd, signal)
+          root = await assertGitRepository(cwd, signal)
         } catch (error) {
           return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
         }
 
+        if (scope.kind === 'auto' || scope.kind === 'uncommitted') {
+          let fingerprint: string | undefined
+          try {
+            fingerprint = await workingTreeFingerprint(root, signal)
+          } catch (error) {
+            return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
+          }
+          const sessionId = String(agent.id)
+          if (scope.kind === 'auto') {
+            if (fingerprint === undefined) {
+              return { kind: 'success', text: 'Automatic code review skipped: the working tree has no changes.' }
+            }
+            if (reviewedFingerprints.get(sessionId) === fingerprint) {
+              return { kind: 'success', text: 'Automatic code review skipped: these changes were already reviewed.' }
+            }
+          }
+          if (fingerprint !== undefined) reviewedFingerprints.set(sessionId, fingerprint)
+        }
+
         agent.followup(createUserMessage({
-          content: [{ type: 'text', text: buildReviewPrompt(scope, cwd) }],
+          content: [{ type: 'text', text: buildReviewPrompt(scope, root) }],
           source: {
             kind: 'plugin',
             plugin: 'dsh-oauth-model-providers',

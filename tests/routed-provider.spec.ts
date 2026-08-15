@@ -133,6 +133,61 @@ describe('routedProvider', () => {
     await expect(output.result()).resolves.toMatchObject({ provider: 'oauth-route' })
   })
 
+  it('preserves DSH tool definitions, streamed calls, and call ids through the OAuth route', async () => {
+    let dispatchedContext: Context | undefined
+    const toolMessage: AssistantMessage = {
+      ...assistant('upstream'),
+      content: [{
+        type: 'toolCall',
+        id: 'call_read_1|fc_read_1',
+        name: 'read_file',
+        arguments: { path: 'README.md' },
+      }],
+      stopReason: 'toolUse',
+    }
+    const base: Provider = {
+      id: 'upstream',
+      name: 'Upstream',
+      auth: { apiKey: { name: 'Key', resolve: async () => undefined } },
+      getModels: () => [model('upstream')],
+      stream: () => { throw new Error('not used') },
+      streamSimple: (_selected, context) => {
+        dispatchedContext = context
+        const stream = createAssistantMessageEventStream()
+        queueMicrotask(() => stream.push({ type: 'done', reason: 'toolUse', message: toolMessage }))
+        return stream
+      },
+    }
+    const routed = routedProvider(base, 'openai-codex-oauth', 'OpenAI Codex (OAuth)')
+    const context = {
+      systemPrompt: 'Use tools when needed.',
+      messages: [],
+      tools: [{
+        name: 'read_file',
+        description: 'Read one workspace file.',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+          required: ['path'],
+        },
+      }],
+    } as Context
+
+    const output = routed.streamSimple(routed.getModels()[0]!, context)
+    const result = await output.result()
+    expect(dispatchedContext?.tools).toBe(context.tools)
+    expect(result).toMatchObject({
+      provider: 'openai-codex-oauth',
+      stopReason: 'toolUse',
+      content: [{
+        type: 'toolCall',
+        id: 'call_read_1|fc_read_1',
+        name: 'read_file',
+        arguments: { path: 'README.md' },
+      }],
+    })
+  })
+
   it('repairs only the legacy upstream replay alias on saved route messages', () => {
     const original = [{
       id: 'message-1',
