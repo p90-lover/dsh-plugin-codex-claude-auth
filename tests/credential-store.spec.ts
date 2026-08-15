@@ -2,6 +2,7 @@ import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { describe, expect, it } from 'vitest'
 import type { HarnessCredentialBackend } from '../src/credential-store.ts'
 import { HarnessOAuthCredentialStore } from '../src/credential-store.ts'
+import { claudeUsage } from '../src/account-usage.ts'
 
 function ref(value: string): CredentialRef {
   return value as CredentialRef
@@ -87,5 +88,34 @@ describe('HarnessOAuthCredentialStore', () => {
     expect((await store.read('openai-codex') as { access?: string }).access).toBe('access-one')
     await store.setProxy('openai-codex', accounts[0]!.id, undefined)
     expect((await store.accounts('openai-codex')).find(account => account.id === accounts[0]!.id)?.proxyId).toBeUndefined()
+  })
+
+  it('parses Claude live usage into separate 5-hour and weekly windows', () => {
+    const usage = claudeUsage({
+      five_hour: { utilization: 0.3, resets_at: '2030-01-01T01:00:00.000Z' },
+      seven_day: { utilization: 60, resets_at: '2030-01-07T01:00:00.000Z' },
+    })
+    expect(usage).toMatchObject({
+      usedPercent: 60,
+      remainingPercent: 40,
+      source: 'claude-live',
+      windows: [
+        { id: 'five-hour', usedPercent: 30, remainingPercent: 70, resetsAt: 1893459600, windowMinutes: 300 },
+        { id: 'weekly', usedPercent: 60, remainingPercent: 40, resetsAt: 1893978000, windowMinutes: 10080 },
+      ],
+    })
+  })
+
+  it('persists the OpenAI context-window choice without exposing or replacing account data', async () => {
+    const backend = memoryBackend()
+    const store = new HarnessOAuthCredentialStore(backend, new Map([['openai-codex', ref('TEST_OAUTH')]]))
+    await store.modify('openai-codex', async () => ({
+      type: 'oauth', access: 'access-secret', refresh: 'refresh-secret', expires: 1,
+    }))
+
+    await store.setContextWindow('openai-codex', 353_000)
+    expect(await store.contextWindow('openai-codex')).toBe(353_000)
+    expect((await store.read('openai-codex') as { access?: string }).access).toBe('access-secret')
+    expect(JSON.stringify(await store.accounts('openai-codex'))).not.toContain('access-secret')
   })
 })

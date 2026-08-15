@@ -168,4 +168,17 @@ describe('OAuth model discovery', () => {
     })).rejects.toThrow(/HTTP 503/u)
     expect(provider.getModels().map(model => model.id)).toEqual(['gpt-5.6-sol'])
   })
+
+  it('applies a live context-window override without rewriting the cached provider catalog', async () => {
+    let selected = 252_000
+    const provider = autoModelProvider(
+      baseProvider('openai-codex', 'openai-codex-responses'),
+      'openai-codex',
+      undefined,
+      () => selected,
+    )
+    expect(provider.getModels()[0]?.contextWindow).toBe(252_000)
+    selected = 353_000
+    expect(provider.getModels()[0]?.contextWindow).toBe(353_000)
+  })
 })

@@ -1,6 +1,15 @@
+import { randomUUID } from 'node:crypto'
 import type { OAuthCredential } from '@earendil-works/pi-ai'
 import type { HarnessOAuthCredentialStore, PublicOAuthAccount } from './credential-store.ts'
 import { withProviderProxy } from './proxy.ts'
+
+export interface AccountUsageWindow {
+  id: 'five-hour' | 'weekly'
+  usedPercent: number
+  remainingPercent: number
+  resetsAt?: number
+  windowMinutes: number
+}
 
 export interface AccountUsage {
   usedPercent?: number
@@ -8,7 +17,8 @@ export interface AccountUsage {
   resetsAt?: number
   windowMinutes?: number
   resetCredits?: number
-  source: 'openai-live' | 'configured' | 'unavailable'
+  windows?: readonly AccountUsageWindow[]
+  source: 'openai-live' | 'claude-live' | 'unavailable'
   error?: string
 }
 
@@ -24,6 +34,60 @@ function object(value: unknown): Record<string, unknown> | undefined {
 
 function number(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function percent(value: unknown): number | undefined {
+  const parsed = number(value)
+  if (parsed === undefined || parsed < 0) return undefined
+  return Math.min(100, parsed <= 1 ? parsed * 100 : parsed)
+}
+
+function unixSeconds(value: unknown): number | undefined {
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : undefined
+  }
+  const parsed = number(value)
+  if (parsed === undefined || parsed <= 0) return undefined
+  return Math.floor(parsed > 10_000_000_000 ? parsed / 1000 : parsed)
+}
+
+function claudeWindow(
+  id: AccountUsageWindow['id'],
+  windowMinutes: number,
+  value: unknown,
+): AccountUsageWindow | undefined {
+  const source = object(value)
+  const usedPercent = percent(source?.utilization ?? source?.used_percent ?? source?.usedPercent)
+  if (usedPercent === undefined) return undefined
+  const resetsAt = unixSeconds(source?.resets_at ?? source?.reset_at ?? source?.resetsAt)
+  return {
+    id,
+    usedPercent,
+    remainingPercent: Math.max(0, 100 - usedPercent),
+    ...(resetsAt === undefined ? {} : { resetsAt }),
+    windowMinutes,
+  }
+}
+
+/** Parse Claude Code's authenticated 5-hour and 7-day usage snapshot. */
+export function claudeUsage(payload: unknown): AccountUsage {
+  const root = object(payload)
+  const windows = [
+    claudeWindow('five-hour', 5 * 60, root?.five_hour ?? root?.fiveHour),
+    claudeWindow('weekly', 7 * 24 * 60, root?.seven_day ?? root?.sevenDay),
+  ].filter((value): value is AccountUsageWindow => value !== undefined)
+  if (windows.length === 0) throw new Error('usage response did not include 5-hour or weekly limits')
+  const usedPercent = Math.max(...windows.map(window => window.usedPercent))
+  const resets = windows.flatMap(window => window.resetsAt === undefined ? [] : [window.resetsAt])
+  return {
+    usedPercent,
+    remainingPercent: Math.max(0, 100 - usedPercent),
+    ...(resets.length === 0 ? {} : { resetsAt: Math.min(...resets) }),
+    windowMinutes: Math.min(...windows.map(window => window.windowMinutes)),
+    windows,
+    source: 'claude-live',
+  }
 }
 
 function openAiUsage(payload: unknown): AccountUsage {
@@ -64,6 +128,20 @@ async function fetchOpenAiUsage(credential: OAuthCredential): Promise<AccountUsa
   return openAiUsage(await response.json())
 }
 
+async function fetchClaudeUsage(credential: OAuthCredential): Promise<AccountUsage> {
+  const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
+    headers: {
+      authorization: `Bearer ${credential.access}`,
+      accept: 'application/json',
+      'anthropic-beta': 'oauth-2025-04-20',
+      'user-agent': 'claude-cli/2.1.80',
+      'x-app': 'cli',
+    },
+  })
+  if (!response.ok) throw new Error(`usage request returned HTTP ${response.status}`)
+  return claudeUsage(await response.json())
+}
+
 export class AccountUsageMonitor {
   private cache: { at: number; value: readonly PublicAccountWithUsage[] } | undefined
 
@@ -74,23 +152,17 @@ export class AccountUsageMonitor {
   ) {}
 
   async read(force = false): Promise<readonly PublicAccountWithUsage[]> {
-    if (!force && this.cache !== undefined && Date.now() - this.cache.at < 60_000) return this.cache.value
+    const ttl = this.providerId === 'anthropic' ? 5 * 60_000 : 60_000
+    if (!force && this.cache !== undefined && Date.now() - this.cache.at < ttl) return this.cache.value
     const entries = await this.store.accountCredentials(this.providerId)
     const value = await Promise.all(entries.map(async ({ account, credential }): Promise<PublicAccountWithUsage> => {
-      if (this.providerId !== 'openai-codex') {
-        return {
-          ...account,
-          usage: account.configuredUsage === undefined
-            ? { source: 'unavailable' }
-            : {
-                ...account.configuredUsage,
-                remainingPercent: Math.max(0, 100 - account.configuredUsage.usedPercent),
-                source: 'configured',
-              },
-        }
-      }
       try {
-        return { ...account, usage: await withProviderProxy(this.getProxy(account.proxyId), () => fetchOpenAiUsage(credential)) }
+        const usage = await withProviderProxy(this.getProxy(account.proxyId), () => {
+          if (this.providerId === 'openai-codex') return fetchOpenAiUsage(credential)
+          if (this.providerId === 'anthropic') return fetchClaudeUsage(credential)
+          throw new Error(`usage is not supported for provider ${this.providerId}`)
+        })
+        return { ...account, usage }
       } catch (error) {
         return { ...account, usage: { source: 'unavailable', error: error instanceof Error ? error.message : String(error) } }
       }
@@ -136,4 +208,3 @@ export function isConfirmedUsageExhaustion(error: unknown): boolean {
   const message = error instanceof Error ? `${error.message} ${String(error.cause ?? '')}` : String(error)
   return /(?:usage[_ -]?limit[_ -]?exceeded|usage limit (?:has been )?reached|quota (?:is )?exhausted|insufficient_quota)/iu.test(message)
 }
-import { randomUUID } from 'node:crypto'

@@ -8,8 +8,9 @@ import type {
   Provider,
 } from '@earendil-works/pi-ai'
 import type { Message } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it } from 'vitest'
-import { repairLegacyReplayMessages } from '../src/replay-compat.ts'
+import { repairLegacyReplayMessages, withHighestReasoningDefault } from '../src/replay-compat.ts'
 import { enforceReasoningPayload, routedProvider } from '../src/routed-provider.ts'
 
 function model(provider: string): Model<Api> {
@@ -48,6 +49,22 @@ function assistant(provider: string): AssistantMessage {
 }
 
 describe('routedProvider', () => {
+  it('uses the exact model highest non-off effort as its visible and request default', () => {
+    const resolved = withHighestReasoningDefault({
+      provider: 'openai-codex-oauth',
+      id: 'gpt-5.6-sol',
+      name: 'GPT-5.6-Sol',
+      reasoning: {
+        efforts: ['off', 'low', 'high', 'max'].map(id => ({ id: ReasoningEffortId(id), name: id })),
+        defaultEffort: ReasoningEffortId('low'),
+      },
+    })
+    expect(resolved.reasoning?.defaultEffort).toBe('max')
+
+    const noReasoning = { provider: 'route', id: 'plain', name: 'Plain' }
+    expect(withHighestReasoningDefault(noReasoning)).toBe(noReasoning)
+  })
+
   it('enforces the selected effort in OpenAI and adaptive Claude wire payloads', () => {
     const openai = { ...model('openai-codex'), reasoning: true, thinkingLevelMap: { high: 'high' } }
     expect(enforceReasoningPayload({ model: 'gpt-test' }, openai, 'high')).toMatchObject({

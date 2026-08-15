@@ -16,6 +16,36 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
+const REASONING_EFFORT_RANK = new Map([
+  ['off', 0],
+  ['minimal', 1],
+  ['low', 2],
+  ['medium', 3],
+  ['high', 4],
+  ['xhigh', 5],
+  ['max', 6],
+])
+
+/** Resolve an omitted effort to the highest non-off level the exact model advertises. */
+export function withHighestReasoningDefault(info: LlmResolvedModelInfo): LlmResolvedModelInfo {
+  const reasoning = info.reasoning
+  if (reasoning === undefined) return info
+  const efforts = reasoning.efforts.filter(effort => String(effort.id) !== 'off')
+  if (efforts.length === 0) return info
+  const highest = efforts.reduce((selected, candidate) => {
+    const selectedRank = REASONING_EFFORT_RANK.get(String(selected.id)) ?? -1
+    const candidateRank = REASONING_EFFORT_RANK.get(String(candidate.id)) ?? -1
+    return candidateRank >= selectedRank ? candidate : selected
+  })
+  return {
+    ...info,
+    reasoning: {
+      ...reasoning,
+      defaultEffort: highest.id,
+    },
+  }
+}
+
 /** Repair replay metadata written by releases before routed stream identity was normalized. */
 export function repairLegacyReplayMessages(
   messages: Message[],
@@ -71,7 +101,7 @@ export class ReplayCompatibleAdapter extends LlmAdapter {
     model: string,
     signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
-    return this.delegate.resolveModel(provider, model, signal)
+    return this.delegate.resolveModel(provider, model, signal).then(withHighestReasoningDefault)
   }
 
   override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {

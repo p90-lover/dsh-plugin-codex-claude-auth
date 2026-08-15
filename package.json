@@ -1,6 +1,6 @@
 {
   "name": "dsh-oauth-model-providers",
-  "version": "0.7.1",
+  "version": "0.7.4",
   "description": "OpenAI Codex and Anthropic OAuth providers for DeepSeek Harness with reusable proxy assignments, remote compaction, code review, and model discovery",
   "type": "module",
   "main": "./lib/index.js",
@@ -50,7 +50,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run tests/credential-store.spec.ts tests/routed-provider.spec.ts tests/remote-compaction.spec.ts tests/code-review.spec.ts tests/model-discovery.spec.ts tests/browser-auth.spec.ts tests/proxy.spec.ts",
+    "test": "vitest run tests/credential-store.spec.ts tests/routed-provider.spec.ts tests/remote-compaction.spec.ts tests/code-review.spec.ts tests/model-discovery.spec.ts tests/browser-auth.spec.ts tests/proxy.spec.ts tests/failover.spec.ts",
     "check": "npm run typecheck && npm run test && npm run build"
   },
   "engines": {

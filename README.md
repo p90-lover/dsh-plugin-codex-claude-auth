@@ -7,37 +7,8 @@ An experimental DeepSeek Harness bundle that adds two independent LLM routes:
 
 The bundle uses DeepSeek Harness services for model routing, a same-origin Settings wizard, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`. After sign-in, the plugin fetches the account's provider-owned model catalog and keeps the bundled `pi-ai` catalog as an offline/failure fallback.
 
-## Version 0.7.1 fix
-
-- OAuth Providers and Proxies now share one transactional Settings-slot lifecycle, preventing either selected page from intermittently rendering blank after reconnects or navigation changes.
-
-## Version 0.7.0 additions
-
-- Proxy management now has its own **Settings → Proxies** section instead of appearing inside OAuth enrollment cards.
-- Save multiple named HTTP(S) proxies once, see only their redacted hosts, and assign them independently to the OpenAI provider, Claude provider, or any saved OAuth account.
-- Account assignments override provider assignments. Unassigned accounts/providers use the first proxy in the list; **Make default** moves a proxy into that first position.
-- Existing single shared/provider proxy secrets migrate automatically into the reusable list without sending their URLs to the browser.
-
-## Version 0.6.1 additions
-
-- OpenAI-only **Auto review** in the composer. It is enabled by default, remembered in the browser, runs only after a newly completed OpenAI Codex turn, skips its own reviewer turn, and deduplicates unchanged working-tree state.
-- The OAuth Settings registration no longer depends on the optional command Remote, so a command-channel reconnect cannot unmount the provider page.
-- End-to-end DSH tool-call compatibility is covered explicitly: tool schemas, streamed calls, `call_id` values, tool results, and replay state remain intact through the public OAuth route.
-
-## Version 0.6.0 additions
-
-- OpenAI OAuth remote compaction through the unary `/codex/responses/compact` endpoint. The plugin preserves the returned opaque items unchanged for the next request and falls back to DSH's local summary compaction when the preview endpoint is unavailable.
-- A Codex-style, read-only code review workflow with a composer **Code review** button and `/review` scopes for uncommitted changes, a base branch, one commit, or custom criteria.
-- The Settings card describes both workflow features in English and Traditional Chinese.
-
-## Version 0.5.1 additions
-
-- Multiple OAuth accounts per provider, account selection, live OpenAI usage/reset details, and a configurable Claude usage fallback.
-- Opt-in OpenAI earned reset-credit use and one-time account failover only on confirmed pre-output usage exhaustion, with a permanent in-chat notice.
-- One proxy selector for both providers, Codex only, or Claude only, including secure promotion of an existing provider proxy to the shared proxy.
-- Independent simultaneous provider logins and manual provider-session refresh.
-- Last-mile effort enforcement: OpenAI sends `reasoning.effort`; adaptive Claude sends `thinking.type=adaptive` plus `output_config.effort`.
-- `Default` means the provider/model default, not maximum effort, and is labelled accordingly.
+> [!WARNING]
+> Using provider OAuth accounts through a third-party harness may violate the provider's terms of service and may result in account restriction, suspension, or termination. Use this project entirely at your own risk. The author and contributors accept no responsibility or liability for account action, lost access, data loss, charges, or any other direct or indirect damage arising from its use.
 
 ## Compatibility
 
@@ -52,7 +23,7 @@ DeepSeek Harness is currently a developer preview. Pin the versions above and ex
 Install the packed bundle into a Web profile:
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.7.1.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.7.4.tgz
 dsh --profile web
 ```
 
@@ -95,7 +66,21 @@ Click **Code review** in the composer to review staged, unstaged, and untracked 
 /review custom security and data-loss issues only
 ```
 
-**Auto review** is enabled by default and remembered in the browser. After a newly completed OpenAI Codex turn, it starts a review only when the working-tree fingerprint is new. It skips clean trees, unchanged diffs, Claude turns, and the review turn itself. The review is queued as a dedicated model turn. Its P0-P3 findings, or `No actionable findings.`, remain in the chat transcript.
+**Auto review** is disabled by default and remembered in the browser when you opt in. After a newly completed OpenAI Codex turn, it starts a review only when the working-tree fingerprint is new. It skips clean trees, unchanged diffs, Claude turns, and the review turn itself. The review is queued as a dedicated model turn. Its P0-P3 findings, or `No actionable findings.`, remain in the chat transcript.
+
+## Usage, context window, and failover
+
+A compact box beside the normal DSH composer shows the active OpenAI usage percentage, Claude 5-hour/weekly percentages, reset details on hover, and the OpenAI context-window selector. OpenAI defaults to `252K`; `353K` can be selected and is remembered in the credential-backed provider configuration. The box uses a DSH input slot and does not replace or take ownership of the text area.
+
+Open **Settings → Failover** to see every provider DSH currently registers or declares as configurable. Choose which available providers may be used, set their order, and select a provider-level fallback model. With no explicit model, the plugin chooses a semantic middle tier when one is identifiable (for example Sonnet, Terra, Balanced, Standard, or Chat), otherwise the middle catalog entry. Each OAuth account can override that provider default or inherit it.
+
+Automatic failover is deliberately bounded:
+
+1. A retryable pre-output provider failure first rotates to the next OAuth account, when one exists.
+2. If that retry also fails, the request moves to the first enabled alternative provider using the configured account/provider model.
+3. If the alternative provider fails, the turn ends; the plugin does not cascade through every provider.
+
+Account and provider changes are written as permanent bilingual text in the chat. Later turns in that session remain pinned to the successful fallback route even though the original picker selection is unchanged. Foreign replay state and source-model defaults are removed before retargeting, then the destination model's own reasoning/output defaults are resolved, preventing provider/model replay mismatches. Failover only happens before model output; it never replays a partially emitted answer or tool call.
 
 ## Codex tool calls inside DSH
 
@@ -112,6 +97,7 @@ Tokens are serialized as one JSON secret per provider through the Harness creden
 - OpenAI proxy: `DSH_OPENAI_CODEX_PROXY`
 - Anthropic proxy: `DSH_ANTHROPIC_PROXY`
 - Reusable proxy list: `DSH_OAUTH_SHARED_PROXY`
+- Failover order/provider defaults: `DSH_OAUTH_FAILOVER_CONFIG`
 
 With the standard local credentials provider, those references live in the Harness credentials store under `$DSH_HOME`. The status command exposes only sign-in and expiry state, never token contents. Refresh writes are serialized within one Harness process.
 
@@ -157,7 +143,7 @@ pnpm test
 pnpm run build
 ```
 
-The focused tests cover remote compaction request/restore behavior, automatic and manual read-only review contracts, Codex tool definition/call/result identity, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, reusable proxy migration/default/assignment precedence, proxy URL redaction, and proxy stream options.
+The focused tests cover remote compaction request/restore behavior, automatic and manual read-only review contracts, Codex tool definition/call/result identity, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, reusable proxy migration/default/assignment precedence, proxy URL redaction, proxy stream options, context-window persistence, and bounded account-first/provider-second failover.
 
 ## License
 

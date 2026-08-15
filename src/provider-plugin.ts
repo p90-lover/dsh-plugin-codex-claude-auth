@@ -19,12 +19,32 @@ import { installBrowserOAuth } from './browser-auth.ts'
 import { autoModelProvider } from './model-discovery.ts'
 import type { OAuthModelCatalog } from './model-discovery.ts'
 import { ProviderProxySetting, proxyAwareProvider } from './proxy.ts'
-import { AccountRotatingAdapter, ReplayCompatibleAdapter } from './replay-compat.ts'
+import { ReplayCompatibleAdapter } from './replay-compat.ts'
 import { AccountUsageMonitor } from './account-usage.ts'
 import { routedProvider } from './routed-provider.ts'
 import { openAiRemoteCompactionProvider } from './remote-compaction.ts'
+import { OpenAIContextWindowPreference } from './context-window.ts'
+import { AutoFailoverAdapter, FailoverPreferences } from './failover.ts'
 
 const DIRECTORY_SETTINGS_SCHEMA = z.object({})
+const FAILOVER_RUNTIMES = new WeakMap<object, {
+  preferences: FailoverPreferences
+  adapter: AutoFailoverAdapter
+}>()
+
+function failoverRuntime(ctx: Context, backend: ReturnType<typeof credentialBackend>): {
+  preferences: FailoverPreferences
+  adapter: AutoFailoverAdapter
+} {
+  const key = ctx.llm as object
+  const existing = FAILOVER_RUNTIMES.get(key)
+  if (existing !== undefined) return existing
+  const preferences = new FailoverPreferences(backend)
+  const adapter = new AutoFailoverAdapter(ctx.llm, preferences)
+  const created = { preferences, adapter }
+  FAILOVER_RUNTIMES.set(key, created)
+  return created
+}
 
 /** Provider facts fixed by one exported plugin entry point. */
 export interface OAuthProviderSpec {
@@ -60,6 +80,13 @@ export function applyOAuthProvider(
   }
 
   const backend = credentialBackend(ctx.credentials)
+  const store = new HarnessOAuthCredentialStore(
+    backend,
+    new Map([[spec.authProviderId, config.credentialRef]]),
+  )
+  const contextWindow = spec.authProviderId === 'openai-codex'
+    ? new OpenAIContextWindowPreference(store)
+    : undefined
   const proxy = new ProviderProxySetting(
     backend,
     config.proxyCredentialRef,
@@ -67,12 +94,13 @@ export function applyOAuthProvider(
     spec.authProviderId,
   )
   const provider = proxyAwareProvider(
-    openAiRemoteCompactionProvider(autoModelProvider(baseProvider, spec.modelCatalog)),
+    openAiRemoteCompactionProvider(autoModelProvider(
+      baseProvider,
+      spec.modelCatalog,
+      undefined,
+      contextWindow?.value,
+    )),
     () => proxy.value,
-  )
-  const store = new HarnessOAuthCredentialStore(
-    backend,
-    new Map([[spec.authProviderId, config.credentialRef]]),
   )
   const authModels: MutableModels = createModels({ credentials: store })
   authModels.setProvider(provider)
@@ -81,6 +109,7 @@ export function applyOAuthProvider(
     store,
     proxyId => proxy.valueForAssignment(proxyId),
   )
+  const failover = failoverRuntime(ctx, backend)
 
   const routeProvider = routedProvider(provider, config.route, config.displayName)
   const profile: ResolvedPiAiProviderProfile = {
@@ -109,16 +138,27 @@ export function applyOAuthProvider(
     config.route,
     spec.authProviderId,
   )
-  const adapter = new AccountRotatingAdapter(baseAdapter, async () => {
-    const reset = await usage.consumeActiveResetCredit()
-    if (reset !== undefined) return { kind: 'reset' as const, from: reset, to: reset }
-    const switched = await store.rotateNext(spec.authProviderId)
-    if (switched !== undefined) {
-      proxy.setActiveAccountProxyId(switched.to.proxyId)
-      usage.invalidate()
-    }
-    return switched
+  failover.adapter.configureRoute(config.route, {
+    delegate: baseAdapter,
+    displayName: config.displayName,
+    rotate: async () => {
+      const switched = await store.rotateNext(spec.authProviderId)
+      if (switched !== undefined) {
+        proxy.setActiveAccountProxyId(switched.to.proxyId)
+        usage.invalidate()
+        return switched
+      }
+      const reset = await usage.consumeActiveResetCredit()
+      if (reset !== undefined) return { kind: 'reset' as const, from: reset, to: reset }
+      return undefined
+    },
+    selectModel: async (models) => {
+      const ids = models.map(model => model.id)
+      const providerDefault = await failover.preferences.modelFor(config.route, ids)
+      return store.resolveActiveFailoverModel(spec.authProviderId, ids, providerDefault)
+    },
   })
+  const adapter = failover.adapter
 
   const registration = ctx.llm.registerAdapter([config.route], adapter)
   registration.replace([])
@@ -139,6 +179,8 @@ export function applyOAuthProvider(
   let directoryAvailable = false
   let directory: DirectoryRegistrationHandle | undefined
   const setAvailable = (available: boolean): void => {
+    failover.adapter.setAvailable(config.route, available)
+    if (routeAvailable === available && directoryAvailable === available) return
     availabilityRevision += 1
     if (routeAvailable !== available) {
       registration.replace(available ? [config.route] : [])
@@ -159,11 +201,16 @@ export function applyOAuthProvider(
     }
   }
 
+  const catalogFingerprint = async (): Promise<string> => JSON.stringify(
+    await adapter.listModels(config.route),
+  )
+
   let refreshingModels: Promise<void> | undefined
   const refreshModels = (force = false): Promise<void> => {
     if (refreshingModels !== undefined) return refreshingModels
     const task = (async () => {
       try {
+        const before = routeAvailable ? await catalogFingerprint() : undefined
         const result = await authModels.refresh({ allowNetwork: true, force })
         const error = result.errors.get(spec.authProviderId)
         if (error !== undefined) {
@@ -172,7 +219,7 @@ export function applyOAuthProvider(
           )
           ctx.logger.warn(error)
         }
-        if (routeAvailable) registration.replace([config.route])
+        if (routeAvailable && before !== await catalogFingerprint()) registration.replace([config.route])
       } catch (error) {
         ctx.logger.warn(
           `oauth-model-provider: could not publish the refreshed ${config.displayName} model catalog`,
@@ -195,9 +242,12 @@ export function applyOAuthProvider(
       store.read(spec.authProviderId),
       store.accounts(spec.authProviderId),
       proxy.refresh().then(() => undefined),
+      contextWindow?.load() ?? Promise.resolve(),
     ]).then(async ([stored, accounts]) => {
       if (!live || availabilityRevision !== bootstrapRevision || stored?.type !== 'oauth') return
       proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
+      await authModels.refresh({ allowNetwork: false, force: false })
+      if (!live || availabilityRevision !== bootstrapRevision) return
       setAvailable(true)
       await refreshModels()
     }, (error) => {
@@ -223,8 +273,13 @@ export function applyOAuthProvider(
       async ([stored, accounts]) => {
         const available = stored?.type === 'oauth'
         proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
-        setAvailable(available)
-        if (available) await refreshModels(true)
+        if (!available) {
+          setAvailable(false)
+          return
+        }
+        await authModels.refresh({ allowNetwork: false, force: false })
+        setAvailable(true)
+        await refreshModels(true)
       },
       (error: unknown) => {
         ctx.logger.warn(`oauth-model-provider: could not refresh ${config.displayName} OAuth state`)
@@ -243,6 +298,14 @@ export function applyOAuthProvider(
     config.displayName,
     config.route,
     setAvailable,
+    contextWindow,
+    async () => {
+      await authModels.refresh({ allowNetwork: false, force: false })
+      if (routeAvailable) registration.replace([config.route])
+    },
+    failover.preferences,
+    ctx.llm,
+    () => failover.adapter.availableRoutes(),
   )
 
   installOAuthCommands(

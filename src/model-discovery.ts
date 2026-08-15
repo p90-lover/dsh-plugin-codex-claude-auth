@@ -29,7 +29,7 @@ interface RemoteCatalog {
 }
 
 const CODEX_CLIENT_VERSION = '0.147.0'
-const PLUGIN_VERSION = '0.5.1'
+const PLUGIN_VERSION = '0.7.4'
 const REFRESH_TTL_MS = 15 * 60 * 1000
 const REQUEST_TIMEOUT_MS = 20_000
 const THINKING_LEVELS: readonly ModelThinkingLevel[] = [
@@ -311,14 +311,22 @@ export function autoModelProvider(
   base: Provider,
   catalog: OAuthModelCatalog,
   fetch: Fetch = (input, init) => globalThis.fetch(input, init),
+  contextWindowOverride?: () => number | undefined,
 ): Provider {
   const fallback = [...base.getModels()]
   let models: readonly Model<Api>[] = fallback
   let inflight: Promise<void> | undefined
 
+  const visibleModels = (): readonly Model<Api>[] => {
+    const contextWindow = contextWindowOverride?.()
+    return contextWindow === undefined
+      ? models
+      : models.map(model => ({ ...model, contextWindow }))
+  }
+
   return {
     ...base,
-    getModels: () => models,
+    getModels: visibleModels,
     refreshModels: (context: RefreshModelsContext): Promise<void> => {
       inflight ??= (async () => {
         try {

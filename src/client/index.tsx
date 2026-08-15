@@ -107,6 +107,9 @@ const zhBase: { [Key in keyof typeof enBase]: string } = {
 
 const en = {
   ...enBase,
+  usageWindowFiveHour: '5-hour', usageWindowWeekly: 'Weekly',
+  usageWindowDetails: '{window}: {used}% used · {remaining}% left · resets {reset}',
+  usageResetUnknown: 'unknown',
   accounts: 'Accounts', activeAccount: 'Active', useAccount: 'Use account',
   refreshSession: 'Refresh provider session', refreshUsage: 'Refresh usage',
   usageUnavailable: 'Usage unavailable', usageDetails: '{used}% used · {remaining}% left · resets {reset}',
@@ -115,8 +118,6 @@ const en = {
   sharedProxy: 'Both providers (shared)', codexProxy: 'Codex only', claudeProxy: 'Claude only',
   proxyScope: 'Apply proxy to', sharedProxySource: 'Shared proxy', providerProxySource: 'Provider-only proxy',
   reuseForBoth: 'Use this saved proxy for both providers',
-  claudeUsageHelp: 'Claude fallback: enter the used percentage and optional reset time from your plan.',
-  saveClaudeUsage: 'Save Claude usage',
   codexFeatures: 'Codex workflow features',
   remoteCompaction: 'Remote compaction is automatic for OpenAI OAuth. If the preview endpoint is unavailable, DSH safely falls back to its local summary compaction.',
   codeReviewHelp: 'Use Code review for a dedicated read-only review, or leave Auto review enabled to review only new OpenAI changes. Findings stay in chat.',
@@ -127,6 +128,14 @@ const en = {
   autoCodeReviewOn: 'Auto review: On',
   autoCodeReviewOff: 'Auto review: Off',
   autoCodeReviewTitle: 'Automatically review new uncommitted changes after an OpenAI Codex turn',
+  composerUsage: 'Usage', composerUsageLoading: 'Usage…', composerUsageUnavailable: 'Usage unavailable',
+  contextWindow: 'Context', contextWindowTitle: 'OpenAI context window', contextWindowSaved: 'Context window saved',
+  failoverNav: 'Failover', failoverTitle: 'Automatic provider failover',
+  failoverIntro: 'Retry the current provider with another account first, then try one enabled provider below. A second provider failure ends the turn.',
+  failoverAutoMiddle: 'Auto (middle: {model})', failoverProviderModel: '{provider} default model',
+  failoverAccountModel: '{provider} · {account}', failoverInherit: 'Inherit provider default',
+  failoverEnabled: 'Use for failover', failoverUnavailable: 'Unavailable',
+  failoverMoveUp: 'Move up', failoverMoveDown: 'Move down', failoverSaved: 'Failover settings saved.',
   proxyNav: 'Proxies', proxyPageTitle: 'Provider proxies',
   proxyPageIntro: 'Save reusable HTTP(S) proxies once, then choose which provider and OAuth account uses each proxy.',
   proxyList: 'Saved proxies', proxyName: 'Proxy name', proxyNamePlaceholder: 'Example: US proxy',
@@ -141,6 +150,9 @@ const en = {
 
 const zh: { [Key in keyof typeof en]: string } = {
   ...zhBase,
+  usageWindowFiveHour: '5 小時', usageWindowWeekly: '每週',
+  usageWindowDetails: '{window}：已用 {used}% · 剩餘 {remaining}% · {reset} 重設',
+  usageResetUnknown: '未知',
   accounts: '帳戶', activeAccount: '使用中', useAccount: '使用此帳戶',
   refreshSession: '重新整理提供者工作階段', refreshUsage: '重新整理用量',
   usageUnavailable: '無法取得用量', usageDetails: '已用 {used}% · 剩餘 {remaining}% · {reset} 重設',
@@ -149,8 +161,6 @@ const zh: { [Key in keyof typeof en]: string } = {
   sharedProxy: '兩個提供者（共用）', codexProxy: '僅 Codex', claudeProxy: '僅 Claude',
   proxyScope: '套用代理至', sharedProxySource: '共用代理', providerProxySource: '提供者專用代理',
   reuseForBoth: '將此已儲存代理用於兩個提供者',
-  claudeUsageHelp: 'Claude 備援：輸入方案顯示的已用百分比及選用重設時間。',
-  saveClaudeUsage: '儲存 Claude 用量',
   codexFeatures: 'Codex 工作流程功能',
   remoteCompaction: 'OpenAI OAuth 會自動使用遠端壓縮。若預覽端點無法使用，DSH 會安全地退回本機摘要壓縮。',
   codeReviewHelp: '使用「程式碼審查」執行專用唯讀審查，或保持「自動審查」開啟，只審查新的 OpenAI 變更；結果會保留在聊天中。',
@@ -161,6 +171,14 @@ const zh: { [Key in keyof typeof en]: string } = {
   autoCodeReviewOn: '自動審查：開啟',
   autoCodeReviewOff: '自動審查：關閉',
   autoCodeReviewTitle: 'OpenAI Codex 回合完成後，自動審查新的未提交變更',
+  composerUsage: '用量', composerUsageLoading: '用量…', composerUsageUnavailable: '無法取得用量',
+  contextWindow: '上下文', contextWindowTitle: 'OpenAI 上下文視窗', contextWindowSaved: '上下文視窗已儲存',
+  failoverNav: '自動切換', failoverTitle: '自動切換提供者',
+  failoverIntro: '先用目前提供者的另一個帳號重試，再嘗試下方一個已啟用的提供者；第二個提供者仍失敗時就結束回合。',
+  failoverAutoMiddle: '自動（中階：{model}）', failoverProviderModel: '{provider} 預設模型',
+  failoverAccountModel: '{provider} · {account}', failoverInherit: '繼承提供者預設',
+  failoverEnabled: '用於自動切換', failoverUnavailable: '無法使用',
+  failoverMoveUp: '上移', failoverMoveDown: '下移', failoverSaved: '自動切換設定已儲存。',
   proxyNav: '代理伺服器', proxyPageTitle: '提供者代理伺服器',
   proxyPageIntro: '只需儲存一次可重複使用的 HTTP(S) 代理，再選擇每個提供者與 OAuth 帳號要使用的代理。',
   proxyList: '已儲存的代理', proxyName: '代理名稱', proxyNamePlaceholder: '例如：美國代理',
@@ -181,6 +199,13 @@ type Phase = 'starting' | 'input' | 'authorizing' | 'device_code' | 'complete' |
 interface ProviderStatus {
   connected: boolean
   accounts: readonly OAuthAccount[]
+  contextWindow?: {
+    selected: number
+    options: readonly number[]
+  }
+  failover: {
+    providers: readonly FailoverProvider[]
+  }
   proxy: {
     configured: boolean
     display?: string
@@ -192,6 +217,16 @@ interface ProviderStatus {
     providerProxyId?: string
     activeAccountProxyId?: string
   }
+}
+
+interface FailoverProvider {
+  id: string
+  name: string
+  available: boolean
+  enabled: boolean
+  models: readonly { id: string; name: string }[]
+  defaultModel?: string
+  model?: string
 }
 
 interface ProxyEntry {
@@ -207,15 +242,24 @@ interface OAuthAccount {
   active: boolean
   proxyId?: string
   useResetCredit: boolean
-  configuredUsage?: { usedPercent: number; resetsAt?: number }
+  failoverModel?: string
   usage: {
     usedPercent?: number
     remainingPercent?: number
     resetsAt?: number
     resetCredits?: number
-    source: 'openai-live' | 'configured' | 'unavailable'
+    windows?: readonly AccountUsageWindow[]
+    source: 'openai-live' | 'claude-live' | 'unavailable'
     error?: string
   }
+}
+
+interface AccountUsageWindow {
+  id: 'five-hour' | 'weekly'
+  usedPercent: number
+  resetsAt?: number
+  remainingPercent: number
+  windowMinutes: number
 }
 
 interface FlowPrompt {
@@ -266,7 +310,10 @@ interface SettingsInjected {
   refreshSession: (provider: ProviderCard) => Promise<ProviderStatus>
   selectAccount: (provider: ProviderCard, accountId: string) => Promise<ProviderStatus>
   configureResetCredit: (provider: ProviderCard, accountId: string, enabled: boolean) => Promise<ProviderStatus>
-  configureUsage: (provider: ProviderCard, accountId: string, usedPercent: number, resetsAt?: number) => Promise<ProviderStatus>
+  configureAccountFailoverModel: (provider: ProviderCard, accountId: string, modelId: string | null) => Promise<ProviderStatus>
+  configureProviderFailoverModel: (provider: ProviderCard, providerId: string, modelId: string | null) => Promise<ProviderStatus>
+  configureProviderFailoverEnabled: (provider: ProviderCard, providerId: string, enabled: boolean) => Promise<ProviderStatus>
+  configureProviderFailoverOrder: (provider: ProviderCard, order: readonly string[]) => Promise<ProviderStatus>
   subscribe: (listener: () => void) => () => void
 }
 
@@ -315,6 +362,62 @@ const codeStyle: CSSProperties = { display: 'inline-block', padding: '7px 10px',
 const actionRow: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }
 const accountList: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: 10, borderRadius: 10, background: 'var(--dsw-alias-bg-module-platform)' }
 const accountRow: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }
+const reviewDockStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  width: 'calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))',
+  margin: '0 auto',
+}
+const reviewBarStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  width: '100%',
+  maxWidth: 'calc(var(--dsh-composer-card-max-width) - 4 * var(--dsh-composer-dock-inset))',
+  height: 36,
+  margin: '0 auto',
+  padding: '4px 5px 4px 12px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  border: '1px solid var(--dsw-alias-border-l1)',
+  borderRadius: 12,
+  background: 'var(--dsw-specific-tip)',
+}
+const reviewLabelStyle: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  color: 'var(--dsw-alias-label-primary-dimmed)',
+  fontSize: 13,
+  lineHeight: '20px',
+}
+const composerUsageBoxStyle: CSSProperties = {
+  height: 28,
+  boxSizing: 'border-box',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '2px 6px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 9,
+  color: 'var(--dsw-alias-label-secondary)',
+  background: 'var(--dsw-alias-bg-base)',
+  fontSize: 11,
+  lineHeight: '16px',
+  whiteSpace: 'nowrap',
+}
+const composerContextSelectStyle: CSSProperties = {
+  height: 22,
+  maxWidth: 70,
+  padding: '0 3px',
+  border: 0,
+  borderRadius: 5,
+  color: 'var(--dsw-alias-label-primary)',
+  background: 'var(--dsw-alias-bg-module-platform)',
+  fontSize: 11,
+  outline: 'none',
+  cursor: 'pointer',
+}
 
 function usageCircle(percent: number): CSSProperties {
   const safe = Math.max(0, Math.min(100, percent))
@@ -322,6 +425,15 @@ function usageCircle(percent: number): CSSProperties {
     width: 24, height: 24, borderRadius: '50%', flex: '0 0 24px',
     background: `conic-gradient(var(--dsw-alias-state-success-primary) ${safe}%, var(--dsw-alias-border-l2) 0)`,
     mask: 'radial-gradient(circle at center, transparent 52%, black 54%)',
+  }
+}
+
+function compactUsageCircle(percent: number): CSSProperties {
+  const safe = Math.max(0, Math.min(100, percent))
+  return {
+    width: 14, height: 14, borderRadius: '50%', flex: '0 0 14px',
+    background: `conic-gradient(var(--dsw-alias-state-success-primary) ${safe}%, var(--dsw-alias-border-l2) 0)`,
+    mask: 'radial-gradient(circle at center, transparent 48%, black 52%)',
   }
 }
 
@@ -458,7 +570,6 @@ function OAuthSettingsSection(props: SettingsProps): ReactNode {
     || typeof candidate.refreshSession !== 'function'
     || typeof candidate.selectAccount !== 'function'
     || typeof candidate.configureResetCredit !== 'function'
-    || typeof candidate.configureUsage !== 'function'
     || typeof candidate.subscribe !== 'function') {
     return (
       <section style={page} aria-busy="true" aria-live="polite">
@@ -473,7 +584,6 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
   const {
     describe, start, flow, respond, cancel, logout,
     refreshSession, selectAccount, configureResetCredit, subscribe,
-    configureUsage,
   } = props
   const [language, setLanguage] = useState<Language>(loadLanguage)
   const copy = language === 'zh-TW' ? zh : en
@@ -625,12 +735,20 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
       <div style={cards}>
         {providers.map((provider) => {
           const providerStatus = statuses?.[provider.id]
-          const connected = providerStatus?.connected
-          const loading = statuses === undefined && loadError === undefined
-          const status = loadError !== undefined ? 'error' : connected === true ? 'done' : 'warning'
-          const statusText = loading ? format(copy, 'checking') : loadError !== undefined ? format(copy, 'unavailable') : connected === true ? format(copy, 'connected') : format(copy, 'disconnected')
-          const isBusy = busy === provider.id
           const providerFlow = active[provider.id]
+          const connected = providerStatus?.connected === true || (providerFlow?.phase === 'complete' && providerFlow.connected)
+          const loading = providerStatus === undefined
+            && loadError === undefined
+            && (providerFlow === undefined || !isTerminal(providerFlow.phase))
+          const status = connected ? 'done' : loadError !== undefined ? 'error' : 'warning'
+          const statusText = connected
+            ? format(copy, 'connected')
+            : loading
+              ? format(copy, 'checking')
+              : loadError !== undefined
+                ? format(copy, 'unavailable')
+                : format(copy, 'disconnected')
+          const isBusy = busy === provider.id
           const providerNotice = notice?.provider === provider.id ? notice : undefined
           return (
             <article key={provider.id} style={card} data-oauth-provider={provider.id}>
@@ -676,18 +794,66 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
                         const used = Math.round(account.usage.usedPercent ?? 0)
                         const remaining = Math.round(account.usage.remainingPercent ?? Math.max(0, 100 - used))
                         const reset = account.usage.resetsAt === undefined
-                          ? 'unknown'
+                          ? format(copy, 'usageResetUnknown')
                           : new Date(account.usage.resetsAt * 1000).toLocaleString(language)
                         const usageTitle = account.usage.source === 'unavailable'
                           ? format(copy, 'usageUnavailable')
                           : format(copy, 'usageDetails', { used: String(used), remaining: String(remaining), reset })
+                        const fiveHourUsage = account.usage.windows?.find(window => window.id === 'five-hour')
+                        const weeklyUsage = account.usage.windows?.find(window => window.id === 'weekly')
+                        const claudeUsageWindows = provider.id === 'claude'
+                          ? [
+                              {
+                                id: 'five-hour',
+                                label: format(copy, 'usageWindowFiveHour'),
+                                used: Math.round(fiveHourUsage?.usedPercent ?? 0),
+                                remaining: Math.round(fiveHourUsage?.remainingPercent ?? 100),
+                                resetsAt: fiveHourUsage?.resetsAt,
+                              },
+                              {
+                                id: 'weekly',
+                                label: format(copy, 'usageWindowWeekly'),
+                                used: Math.round(weeklyUsage?.usedPercent ?? 0),
+                                remaining: Math.round(weeklyUsage?.remainingPercent ?? 100),
+                                resetsAt: weeklyUsage?.resetsAt,
+                              },
+                            ]
+                          : []
                         return (
                           <div key={account.id} style={accountRow} data-oauth-account={account.id}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} title={usageTitle}>
-                              <span style={usageCircle(used)} aria-label={`${used}%`} />
-                              <span style={detail}>{used}%</span>
-                              <span style={nameStyle}>{account.label}</span>
-                              {account.active ? <span style={successStyle}>{format(copy, 'activeAccount')}</span> : null}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, flex: '1 1 320px' }}>
+                              <div style={actionRow} title={provider.id === 'codex' ? usageTitle : undefined}>
+                                {provider.id === 'codex' ? <span style={usageCircle(used)} aria-label={`${used}%`} /> : null}
+                                {provider.id === 'codex' ? <span style={detail}>{used}%</span> : null}
+                                <span style={nameStyle}>{account.label}</span>
+                                {account.active ? <span style={successStyle}>{format(copy, 'activeAccount')}</span> : null}
+                              </div>
+                              {provider.id === 'claude'
+                                ? (
+                                    <div style={actionRow} data-claude-usage-windows>
+                                      {claudeUsageWindows.map((window) => {
+                                        const windowReset = window.resetsAt === undefined
+                                          ? format(copy, 'usageResetUnknown')
+                                          : new Date(window.resetsAt * 1000).toLocaleString(language)
+                                        const title = account.usage.source === 'unavailable'
+                                          ? format(copy, 'usageUnavailable')
+                                          : format(copy, 'usageWindowDetails', {
+                                              window: window.label,
+                                              used: String(window.used),
+                                              remaining: String(window.remaining),
+                                              reset: windowReset,
+                                            })
+                                        return (
+                                          <div key={window.id} style={actionRow} title={title} data-usage-window={window.id}>
+                                            <span style={usageCircle(window.used)} aria-label={`${window.label}: ${window.used}%`} />
+                                            <span style={nameStyle}>{window.label}</span>
+                                            <span style={detail}>{window.used}%</span>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  )
+                                : null}
                             </div>
                             <div style={actionRow}>
                               {account.usage.resetCredits === undefined ? null : <span style={detail}>{format(copy, 'resetCredits', { count: String(account.usage.resetCredits) })}</span>}
@@ -700,23 +866,6 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
                                       <input type="checkbox" checked={account.useResetCredit} onChange={(event) => { void updateProvider(provider, () => configureResetCredit(provider, account.id, event.currentTarget.checked)) }} />{' '}
                                       {format(copy, 'useResetCredit')}
                                     </label>
-                                  )
-                                : null}
-                              {provider.id === 'claude'
-                                ? (
-                                    <form style={actionRow} onSubmit={(event) => {
-                                      event.preventDefault()
-                                      const data = new FormData(event.currentTarget)
-                                      const usedPercent = Number(data.get('usedPercent'))
-                                      const resetValue = String(data.get('resetsAt') ?? '')
-                                      const resetsAt = resetValue.length === 0 ? undefined : Math.floor(new Date(resetValue).getTime() / 1000)
-                                      void updateProvider(provider, () => configureUsage(provider, account.id, usedPercent, resetsAt))
-                                    }}>
-                                      <span style={detail}>{format(copy, 'claudeUsageHelp')}</span>
-                                      <input style={{ ...inputStyle, flex: '0 0 84px', minWidth: 84 }} name="usedPercent" type="number" min="0" max="100" defaultValue={account.configuredUsage?.usedPercent ?? 0} aria-label="Claude used percent" />
-                                      <input style={{ ...inputStyle, flex: '0 0 190px', minWidth: 190 }} name="resetsAt" type="datetime-local" defaultValue={account.configuredUsage?.resetsAt === undefined ? '' : new Date(account.configuredUsage.resetsAt * 1000).toISOString().slice(0, 16)} aria-label="Claude reset time" />
-                                      <Button variant="outline" size="sm" type="submit" disabled={busy !== undefined}>{format(copy, 'saveClaudeUsage')}</Button>
-                                    </form>
                                   )
                                 : null}
                             </div>
@@ -955,6 +1104,163 @@ function LoadedProxySettingsSection(props: SettingsProps): ReactNode {
   )
 }
 
+function FailoverSettingsSection(props: SettingsProps): ReactNode {
+  const candidate = props as Partial<SettingsInjected>
+  if (typeof candidate.describe !== 'function'
+    || typeof candidate.configureAccountFailoverModel !== 'function'
+    || typeof candidate.configureProviderFailoverModel !== 'function'
+    || typeof candidate.configureProviderFailoverEnabled !== 'function'
+    || typeof candidate.configureProviderFailoverOrder !== 'function'
+    || typeof candidate.subscribe !== 'function') {
+    return (
+      <section style={page} aria-busy="true" aria-live="polite">
+        <p style={intro}>Loading failover providers… / 正在載入自動切換提供者…</p>
+      </section>
+    )
+  }
+  return <LoadedFailoverSettingsSection {...props} />
+}
+
+function LoadedFailoverSettingsSection(props: SettingsProps): ReactNode {
+  const {
+    describe, configureAccountFailoverModel, configureProviderFailoverModel,
+    configureProviderFailoverEnabled, configureProviderFailoverOrder, subscribe,
+  } = props
+  const [language, setLanguage] = useState<Language>(loadLanguage)
+  const copy = language === 'zh-TW' ? zh : en
+  const [statuses, setStatuses] = useState<Record<ProviderId, ProviderStatus>>()
+  const [busy, setBusy] = useState<string>()
+  const [notice, setNotice] = useState<{ error?: string; saved?: boolean }>()
+  const generation = useRef(0)
+
+  const load = useCallback(async (): Promise<void> => {
+    const current = ++generation.current
+    try {
+      const next = await describe()
+      if (current === generation.current) setStatuses(next)
+    } catch (error) {
+      if (current === generation.current) setNotice({ error: messageOf(error) })
+    }
+  }, [describe])
+
+  useEffect(() => {
+    void load()
+    const dispose = subscribe(() => { void load() })
+    return () => {
+      generation.current += 1
+      dispose()
+    }
+  }, [load, subscribe])
+
+  const run = async (id: string, operation: () => Promise<ProviderStatus>): Promise<void> => {
+    setBusy(id)
+    setNotice(undefined)
+    try {
+      await operation()
+      await load()
+      setNotice({ saved: true })
+    } catch (error) {
+      setNotice({ error: messageOf(error) })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const switchLanguage = (next: Language): void => {
+    setLanguage(next)
+    saveLanguage(next)
+  }
+  const target = providers[0]!
+  const catalog = statuses?.codex.failover.providers
+    ?? statuses?.claude.failover.providers
+    ?? []
+  const move = (index: number, direction: -1 | 1): void => {
+    const destination = index + direction
+    if (destination < 0 || destination >= catalog.length) return
+    const order = catalog.map(provider => provider.id)
+    const [selected] = order.splice(index, 1)
+    order.splice(destination, 0, selected!)
+    void run(`order:${selected}`, () => configureProviderFailoverOrder(target, order))
+  }
+
+  return (
+    <section style={page} aria-labelledby="failover-settings-title" data-failover-settings>
+      <div style={titleRow}>
+        <h2 id="failover-settings-title" style={heading}>{format(copy, 'failoverTitle')}</h2>
+        <div style={languageGroup} aria-label={format(copy, 'language')}>
+          <button type="button" style={languageButton(language === 'en')} aria-pressed={language === 'en'} onClick={() => { switchLanguage('en') }}>{format(copy, 'english')}</button>
+          <button type="button" style={languageButton(language === 'zh-TW')} aria-pressed={language === 'zh-TW'} onClick={() => { switchLanguage('zh-TW') }}>{format(copy, 'traditionalChinese')}</button>
+        </div>
+      </div>
+      <p style={intro}>{format(copy, 'failoverIntro')}</p>
+      <article style={card}>
+        {catalog.map((entry, index) => {
+          const configuredModel = entry.model !== undefined && entry.models.some(model => model.id === entry.model)
+            ? entry.model
+            : ''
+          return (
+            <div key={entry.id} style={accountList} data-failover-provider={entry.id}>
+              <div style={accountRow}>
+                <div style={identity}>
+                  <span style={nameStyle}>{index + 1}. {entry.name}</span>
+                  <span style={routeStyle}>{entry.id}</span>
+                </div>
+                <div style={actionRow}>
+                  {!entry.available ? <span style={errorStyle}>{format(copy, 'failoverUnavailable')}</span> : null}
+                  <label style={detail}>
+                    <input
+                      type="checkbox"
+                      checked={entry.enabled}
+                      disabled={busy !== undefined || !entry.available}
+                      onChange={(event) => { void run(`enabled:${entry.id}`, () => configureProviderFailoverEnabled(target, entry.id, event.currentTarget.checked)) }}
+                    />{' '}{format(copy, 'failoverEnabled')}
+                  </label>
+                  <Button variant="outline" size="sm" disabled={busy !== undefined || index === 0} onClick={() => { move(index, -1) }}>{format(copy, 'failoverMoveUp')}</Button>
+                  <Button variant="outline" size="sm" disabled={busy !== undefined || index === catalog.length - 1} onClick={() => { move(index, 1) }}>{format(copy, 'failoverMoveDown')}</Button>
+                </div>
+              </div>
+              <label style={accountRow}>
+                <span style={detail}>{format(copy, 'failoverProviderModel', { provider: entry.name })}</span>
+                <select
+                  aria-label={format(copy, 'failoverProviderModel', { provider: entry.name })}
+                  value={configuredModel}
+                  disabled={busy !== undefined || !entry.available || !entry.enabled}
+                  onChange={(event) => { const value = event.currentTarget.value; void run(`model:${entry.id}`, () => configureProviderFailoverModel(target, entry.id, value.length === 0 ? null : value)) }}
+                >
+                  <option value="">{format(copy, 'failoverAutoMiddle', {
+                    model: entry.models.find(model => model.id === entry.defaultModel)?.name ?? entry.defaultModel ?? '—',
+                  })}</option>
+                  {entry.models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+                </select>
+              </label>
+              {providers.filter(provider => provider.route === entry.id).flatMap((provider) => {
+                const status = statuses?.[provider.id]
+                return status?.accounts.map(account => (
+                  <label key={account.id} style={accountRow} data-failover-account={`${provider.id}:${account.id}`}>
+                    <span style={detail}>{format(copy, 'failoverAccountModel', { provider: entry.name, account: account.label })}</span>
+                    <select
+                      aria-label={format(copy, 'failoverAccountModel', { provider: entry.name, account: account.label })}
+                      value={account.failoverModel !== undefined && entry.models.some(model => model.id === account.failoverModel) ? account.failoverModel : ''}
+                      disabled={busy !== undefined || !entry.available}
+                      onChange={(event) => { const value = event.currentTarget.value; void run(`account:${provider.id}:${account.id}`, () => configureAccountFailoverModel(provider, account.id, value.length === 0 ? null : value)) }}
+                    >
+                      <option value="">{format(copy, 'failoverInherit')}</option>
+                      {entry.models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+                    </select>
+                  </label>
+                )) ?? []
+              })}
+            </div>
+          )
+        })}
+      </article>
+      {notice?.error === undefined ? null : <p role="alert" style={errorStyle}>{notice.error}</p>}
+      {notice?.saved === true ? <p role="status" style={successStyle}>{format(copy, 'failoverSaved')}</p> : null}
+      <p style={securityStyle}>{format(copy, 'security')}</p>
+    </section>
+  )
+}
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     'settings.oauthProviders': OAuthSettingsKey
@@ -987,7 +1293,7 @@ interface ReviewButtonInjected {
   runReview(mode: 'manual' | 'auto'): Promise<ReviewRunResult>
 }
 
-type ReviewButtonProps = PropsRuntime<'conversation.input.left'>
+type ReviewButtonProps = PropsRuntime<'conversation.input.dock'>
   & PropsLocale<typeof NS>
   & InjectFace<ReviewButtonInjected>
 
@@ -1018,7 +1324,7 @@ function ReviewButton({ input, session, runReview, t }: ReviewButtonProps): Reac
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [autoReview, setAutoReview] = useState(() => {
-    try { return localStorage.getItem(AUTO_REVIEW_STORAGE_KEY) !== 'false' } catch { return true }
+    try { return localStorage.getItem(AUTO_REVIEW_STORAGE_KEY) === 'true' } catch { return false }
   })
   const mounted = useRef(true)
   const processedTurnEnd = useRef(latestCompletion(session)?.seq)
@@ -1027,9 +1333,13 @@ function ReviewButton({ input, session, runReview, t }: ReviewButtonProps): Reac
     mounted.current = true
     return () => { mounted.current = false }
   }, [])
-  useEffect(() => {
-    try { localStorage.setItem(AUTO_REVIEW_STORAGE_KEY, String(autoReview)) } catch { /* storage may be disabled */ }
-  }, [autoReview])
+  const toggleAutoReview = useCallback((): void => {
+    setAutoReview((value) => {
+      const next = !value
+      try { localStorage.setItem(AUTO_REVIEW_STORAGE_KEY, String(next)) } catch { /* storage may be disabled */ }
+      return next
+    })
+  }, [])
 
   const start = useCallback((mode: 'manual' | 'auto'): void => {
     setRunning(true)
@@ -1059,30 +1369,142 @@ function ReviewButton({ input, session, runReview, t }: ReviewButtonProps): Reac
   }, [autoReview, session, start])
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={running || input.phase === 'submitting'}
-        title={t('codeReviewTitle')}
-        aria-label={t('codeReviewTitle')}
-        onClick={() => { start('manual') }}
-      >
-        {t('codeReview')}
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        aria-pressed={autoReview}
-        title={t('autoCodeReviewTitle')}
-        aria-label={t('autoCodeReviewTitle')}
-        onClick={() => { setAutoReview(value => !value) }}
-      >
-        {t(autoReview ? 'autoCodeReviewOn' : 'autoCodeReviewOff')}
-      </Button>
-      {error === null
+    <div style={reviewDockStyle} data-code-review-dock>
+      <div style={reviewBarStyle}>
+        <span style={reviewLabelStyle}>{t('codeReviewTitle')}</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={running || input.phase === 'submitting'}
+            title={t('codeReviewTitle')}
+            aria-label={t('codeReviewTitle')}
+            onClick={() => { start('manual') }}
+          >
+            {t('codeReview')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-pressed={autoReview}
+            title={t('autoCodeReviewTitle')}
+            aria-label={t('autoCodeReviewTitle')}
+            onClick={toggleAutoReview}
+          >
+            {t(autoReview ? 'autoCodeReviewOn' : 'autoCodeReviewOff')}
+          </Button>
+          {error === null
+            ? null
+            : <span role="status" title={error} style={errorStyle}>{t('codeReviewFailed')}</span>}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+type ProviderUsageBoxProps = PropsRuntime<'conversation.input.right'>
+  & PropsLocale<typeof NS>
+
+function ProviderUsageBox({ t }: ProviderUsageBoxProps): ReactNode {
+  const [statuses, setStatuses] = useState<Partial<Record<ProviderId, ProviderStatus>>>({})
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    const load = (): void => {
+      void Promise.all(providers.map(async (provider) => {
+        try {
+          return [provider.id, await requestJson<ProviderStatus>(`${provider.endpoint}/status`)] as const
+        } catch {
+          return [provider.id, undefined] as const
+        }
+      })).then((entries) => {
+        if (!live) return
+        setStatuses(Object.fromEntries(entries.filter((entry) => entry[1] !== undefined)))
+      })
+    }
+    load()
+    const interval = window.setInterval(load, 60_000)
+    return () => {
+      live = false
+      window.clearInterval(interval)
+    }
+  }, [])
+
+  const codex = statuses.codex
+  const claude = statuses.claude
+  const codexAccount = codex?.accounts.find(account => account.active)
+  const claudeAccount = claude?.accounts.find(account => account.active)
+  const codexUsed = Math.round(codexAccount?.usage.usedPercent ?? 0)
+  const fiveHour = claudeAccount?.usage.windows?.find(window => window.id === 'five-hour')
+  const weekly = claudeAccount?.usage.windows?.find(window => window.id === 'weekly')
+  const fiveHourUsed = Math.round(fiveHour?.usedPercent ?? 0)
+  const weeklyUsed = Math.round(weekly?.usedPercent ?? 0)
+  const hasUsage = codexAccount !== undefined || claudeAccount !== undefined
+  const reset = (value: number | undefined): string => value === undefined
+    ? t('usageResetUnknown')
+    : new Date(value * 1000).toLocaleString()
+  const title = [
+    codexAccount === undefined
+      ? undefined
+      : `OpenAI: ${codexUsed}% · ${reset(codexAccount.usage.resetsAt)}`,
+    claudeAccount === undefined
+      ? undefined
+      : `Claude 5h: ${fiveHourUsed}% · ${reset(fiveHour?.resetsAt)}; 7d: ${weeklyUsed}% · ${reset(weekly?.resetsAt)}`,
+  ].filter((value): value is string => value !== undefined).join('\n') || t('composerUsageUnavailable')
+
+  const setContextWindow = (value: number): void => {
+    const provider = providers.find(entry => entry.id === 'codex')!
+    setSaving(true)
+    void postJson<ProviderStatus>(provider, '/context-window', { value }).then((status) => {
+      setStatuses(current => ({ ...current, codex: status }))
+    }).finally(() => { setSaving(false) })
+  }
+
+  return (
+    <span style={composerUsageBoxStyle} title={title} aria-label={title} data-provider-usage-box>
+      {!hasUsage
+        ? <span>{t('composerUsageLoading')}</span>
+        : (
+            <>
+              {codexAccount === undefined
+                ? null
+                : (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                      <span style={compactUsageCircle(codexUsed)} />
+                      <span>OAI {codexUsed}%</span>
+                    </span>
+                  )}
+              {claudeAccount === undefined
+                ? null
+                : (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                      <span style={compactUsageCircle(Math.max(fiveHourUsed, weeklyUsed))} />
+                      <span>C 5h {fiveHourUsed}% · 7d {weeklyUsed}%</span>
+                    </span>
+                  )}
+            </>
+          )}
+      {codex?.contextWindow === undefined
         ? null
-        : <span role="status" title={error} style={errorStyle}>{t('codeReviewFailed')}</span>}
+        : (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title={t('contextWindowTitle')}>
+              <span>{t('contextWindow')}</span>
+              <select
+                style={composerContextSelectStyle}
+                value={codex.contextWindow.selected}
+                disabled={saving}
+                aria-label={t('contextWindowTitle')}
+                onChange={(event) => { setContextWindow(Number(event.currentTarget.value)) }}
+              >
+                {codex.contextWindow.options.map(option => (
+                  <option key={option} value={option}>{Math.round(option / 1000)}K</option>
+                ))}
+              </select>
+            </label>
+          )}
     </span>
   )
 }
@@ -1091,30 +1513,6 @@ export const inject = ['slots', 'locale', 'remote']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'oauth-model-providers: Settings dictionaries')
-  ctx.effect(() => {
-    type MutableLocale = {
-      dicts: Map<string, Map<string, Record<string, string>>>
-      getLocale(): { active: string }
-      publish(active: string, durable: boolean): void
-    }
-    const runtime = ctx.locale as unknown as MutableLocale
-    const model = runtime.dicts.get('model')
-    const english = model?.get('en')
-    const chinese = model?.get('zh')
-    if (english === undefined || chinese === undefined) return () => undefined
-    const oldEnglish = english['effort.providerDefault']
-    const oldChinese = chinese['effort.providerDefault']
-    english['effort.providerDefault'] = 'Default (model default effort)'
-    chinese['effort.providerDefault'] = '預設（模型預設推理等級）'
-    runtime.publish(runtime.getLocale().active, false)
-    return () => {
-      if (oldEnglish === undefined) delete english['effort.providerDefault']
-      else english['effort.providerDefault'] = oldEnglish
-      if (oldChinese === undefined) delete chinese['effort.providerDefault']
-      else chinese['effort.providerDefault'] = oldChinese
-      runtime.publish(runtime.getLocale().active, false)
-    }
-  }, 'oauth-model-providers: clarify provider-default reasoning effort')
 
   const describe = async (): Promise<Record<ProviderId, ProviderStatus>> => {
     const statuses = await Promise.all(providers.map(provider =>
@@ -1137,9 +1535,12 @@ export function apply(ctx: ClientContext): void {
     refreshSession: provider => postJson(provider, '/refresh', {}),
     selectAccount: (provider, accountId) => postJson(provider, '/account/select', { accountId }),
     configureResetCredit: (provider, accountId, enabled) => postJson(provider, '/account/reset-credit', { accountId, enabled }),
-    configureUsage: (provider, accountId, usedPercent, resetsAt) => postJson(provider, '/account/usage-config', { accountId, usedPercent, ...(resetsAt === undefined ? {} : { resetsAt }) }),
+    configureAccountFailoverModel: (provider, accountId, modelId) => postJson(provider, '/account/failover-model', { accountId, modelId }),
+    configureProviderFailoverModel: (provider, providerId, modelId) => postJson(provider, '/failover/model', { providerId, modelId }),
+    configureProviderFailoverEnabled: (provider, providerId, enabled) => postJson(provider, '/failover/enabled', { providerId, enabled }),
+    configureProviderFailoverOrder: (provider, order) => postJson(provider, '/failover/order', { order }),
     subscribe: (listener) => {
-      const refs = new Set([...providers.flatMap(provider => [provider.credentialRef, provider.proxyRef]), 'DSH_OAUTH_SHARED_PROXY'])
+      const refs = new Set([...providers.flatMap(provider => [provider.credentialRef, provider.proxyRef]), 'DSH_OAUTH_SHARED_PROXY', 'DSH_OAUTH_FAILOVER_CONFIG'])
       const stopCredential = ctx.remote.$on('credentials/updated', (ref) => {
         if (refs.has(ref)) listener()
       })
@@ -1148,8 +1549,8 @@ export function apply(ctx: ClientContext): void {
     },
   })
 
-  ctx.slots.inject('settings.section', function* () {
-    yield ctx.slots.register({
+  ctx.slots.inject('settings.section', () => {
+    const disposeOAuth = ctx.slots.register({
       name: 'settings.section',
       id: 'oauth-providers',
       order: 15,
@@ -1157,8 +1558,7 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: injected,
     }, OAuthSettingsSection)
-
-    yield ctx.slots.register({
+    const disposeProxies = ctx.slots.register({
       name: 'settings.section',
       id: 'oauth-proxies',
       order: 16,
@@ -1166,11 +1566,32 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: injected,
     }, ProxySettingsSection)
+    const disposeFailover = ctx.slots.register({
+      name: 'settings.section',
+      id: 'oauth-failover',
+      order: 17,
+      label: () => ctx.locale.bind(NS)('failoverNav'),
+      locale: NS,
+      inject: injected,
+    }, FailoverSettingsSection)
+    return () => {
+      disposeFailover()
+      disposeProxies()
+      disposeOAuth()
+    }
   })
 
+  ctx.slots.inject('conversation.input.right', () => ctx.slots.register({
+    name: 'conversation.input.right',
+    id: 'oauth-provider-usage',
+    order: 30,
+    label: () => ctx.locale.bind(NS)('composerUsage'),
+    locale: NS,
+  }, ProviderUsageBox))
+
   ctx.inject(['remote.commands'], (reviewCtx) => {
-    reviewCtx.slots.inject('conversation.input.left', () => reviewCtx.slots.register({
-      name: 'conversation.input.left',
+    reviewCtx.slots.inject('conversation.input.dock', () => reviewCtx.slots.register({
+      name: 'conversation.input.dock',
       id: 'codex-code-review',
       order: 35,
       label: () => reviewCtx.locale.bind(NS)('codeReview'),

@@ -12,6 +12,8 @@ import type { HarnessOAuthCredentialStore } from './credential-store.ts'
 import type { PublicAccountWithUsage } from './account-usage.ts'
 import type { AccountUsageMonitor } from './account-usage.ts'
 import type { ProviderProxySetting, PublicProxySetting } from './proxy.ts'
+import type { ContextWindowStatus, OpenAIContextWindowPreference } from './context-window.ts'
+import type { FailoverPreferences, FailoverRuntime, PublicFailoverPreferences } from './failover.ts'
 
 const BODY_LIMIT_BYTES = 16 * 1024
 const API_ROOT = '/plugins/dsh-oauth-model-providers/oauth'
@@ -55,6 +57,8 @@ export interface BrowserOAuthStatus {
   connected: boolean
   accounts: readonly PublicAccountWithUsage[]
   proxy: PublicProxySetting
+  contextWindow?: ContextWindowStatus
+  failover: PublicFailoverPreferences
 }
 
 interface BrowserOAuthChange {
@@ -383,6 +387,11 @@ export class BrowserOAuthController {
     private readonly authProviderId: string,
     private readonly providerName: string,
     private readonly setAvailable: (available: boolean) => void,
+    private readonly contextWindow?: OpenAIContextWindowPreference,
+    private readonly publishContextWindow?: () => Promise<void>,
+    private readonly failover?: FailoverPreferences,
+    private readonly failoverRuntime?: FailoverRuntime,
+    private readonly availableFailoverRoutes?: () => ReadonlySet<string>,
   ) {}
 
   async status(): Promise<BrowserOAuthStatus> {
@@ -391,13 +400,18 @@ export class BrowserOAuthController {
     const connected = stored?.type === 'oauth'
     const accounts = await this.usage.read()
     this.proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
-    if (connected) {
-      this.setAvailable(true)
-    }
+    const failover = this.failover === undefined || this.failoverRuntime === undefined
+      ? { providers: [] }
+      : await this.failover.describe(
+        this.failoverRuntime,
+        this.availableFailoverRoutes?.() ?? new Set(),
+      )
     return {
       connected,
       accounts,
       proxy: this.proxy.describe(),
+      failover,
+      ...this.contextWindow === undefined ? {} : { contextWindow: this.contextWindow.status() },
     }
   }
 
@@ -535,21 +549,52 @@ export class BrowserOAuthController {
     return this.status()
   }
 
-  async configureUsage(accountId: string, usedPercent: number, resetsAt?: number): Promise<BrowserOAuthStatus> {
-    if (this.authProviderId !== 'anthropic') {
-      throw new HttpError(400, 'Configured usage fallback is available only for Claude accounts.')
+  async setContextWindow(value: number): Promise<BrowserOAuthStatus> {
+    if (this.contextWindow === undefined) {
+      throw new HttpError(400, 'Context-window selection is available only for OpenAI Codex.')
     }
-    if (!Number.isFinite(usedPercent) || usedPercent < 0 || usedPercent > 100) {
-      throw new HttpError(400, 'usedPercent must be between 0 and 100.')
+    await this.contextWindow.set(value)
+    await this.publishContextWindow?.()
+    return this.status()
+  }
+
+  async setAccountFailoverModel(accountId: string, modelId: string | undefined): Promise<BrowserOAuthStatus> {
+    if (modelId !== undefined && !this.models.getModels(this.authProviderId).some(model => model.id === modelId)) {
+      throw new HttpError(400, 'Failover model is not available for this provider.')
     }
-    if (resetsAt !== undefined && (!Number.isFinite(resetsAt) || resetsAt <= 0)) {
-      throw new HttpError(400, 'resetsAt must be a Unix timestamp in seconds.')
+    await this.store.setAccountFailoverModel(this.authProviderId, accountId, modelId)
+    return this.status()
+  }
+
+  async setProviderFailoverModel(providerId: string, modelId: string | undefined): Promise<BrowserOAuthStatus> {
+    if (this.failover === undefined || this.failoverRuntime === undefined) {
+      throw new HttpError(503, 'Failover settings are unavailable.')
     }
-    await this.store.setConfiguredUsage(this.authProviderId, accountId, {
-      usedPercent,
-      ...(resetsAt === undefined ? {} : { resetsAt }),
-    })
-    this.usage.invalidate()
+    if (modelId !== undefined
+      && !(await this.failoverRuntime.listModels(providerId)).some(model => model.id === modelId)) {
+      throw new HttpError(400, 'Failover model is not available for this provider.')
+    }
+    await this.failover.setProviderModel(providerId, modelId)
+    return this.status()
+  }
+
+  async setProviderFailoverEnabled(providerId: string, enabled: boolean): Promise<BrowserOAuthStatus> {
+    if (this.failover === undefined || this.failoverRuntime === undefined) {
+      throw new HttpError(503, 'Failover settings are unavailable.')
+    }
+    const detected = this.failoverRuntime.listProviders().map(provider => provider.id)
+    if (!detected.includes(providerId)) throw new HttpError(400, 'Failover provider is not registered.')
+    await this.failover.setProviderEnabled(providerId, enabled, detected)
+    return this.status()
+  }
+
+  async setProviderFailoverOrder(order: readonly string[]): Promise<BrowserOAuthStatus> {
+    if (this.failover === undefined || this.failoverRuntime === undefined) {
+      throw new HttpError(503, 'Failover settings are unavailable.')
+    }
+    const detected = new Set(this.failoverRuntime.listProviders().map(provider => provider.id))
+    if (order.some(provider => !detected.has(provider))) throw new HttpError(400, 'Failover order contains an unknown provider.')
+    await this.failover.setProviderOrder(order)
     return this.status()
   }
 
@@ -575,6 +620,11 @@ export function installBrowserOAuth(
   providerName: string,
   route: string,
   setAvailable: (available: boolean) => void,
+  contextWindow?: OpenAIContextWindowPreference,
+  publishContextWindow?: () => Promise<void>,
+  failover?: FailoverPreferences,
+  failoverRuntime?: FailoverRuntime,
+  availableFailoverRoutes?: () => ReadonlySet<string>,
 ): void {
   const prefix = `${API_ROOT}/${encodeURIComponent(route)}`
   ctx.inject(['webServer'], (webCtx) => {
@@ -586,6 +636,11 @@ export function installBrowserOAuth(
       authProviderId,
       providerName,
       setAvailable,
+      contextWindow,
+      publishContextWindow,
+      failover,
+      failoverRuntime,
+      availableFailoverRoutes,
     )
     webCtx.effect(() => {
       const disposeRoute = webCtx.webServer.register({
@@ -645,16 +700,48 @@ export function installBrowserOAuth(
               ))
               return
             }
-            if (action === '/account/usage-config') {
-              if (typeof body.usedPercent !== 'number') throw new HttpError(400, 'usedPercent must be a number.')
-              if (body.resetsAt !== undefined && typeof body.resetsAt !== 'number') {
-                throw new HttpError(400, 'resetsAt must be a number when provided.')
+            if (action === '/context-window') {
+              if (typeof body.value !== 'number' || !Number.isInteger(body.value)) {
+                throw new HttpError(400, 'value must be an integer token count.')
               }
-              sendJson(res, 200, await controller.configureUsage(
+              sendJson(res, 200, await controller.setContextWindow(body.value))
+              return
+            }
+            if (action === '/account/failover-model') {
+              const modelId = body.modelId
+              if (modelId !== null && typeof modelId !== 'string') {
+                throw new HttpError(400, 'modelId must be a model id or null.')
+              }
+              sendJson(res, 200, await controller.setAccountFailoverModel(
                 requiredString(body, 'accountId'),
-                body.usedPercent,
-                body.resetsAt,
+                modelId === null ? undefined : modelId,
               ))
+              return
+            }
+            if (action === '/failover/model') {
+              const modelId = body.modelId
+              if (modelId !== null && typeof modelId !== 'string') {
+                throw new HttpError(400, 'modelId must be a model id or null.')
+              }
+              sendJson(res, 200, await controller.setProviderFailoverModel(
+                requiredString(body, 'providerId'),
+                modelId === null ? undefined : modelId,
+              ))
+              return
+            }
+            if (action === '/failover/enabled') {
+              if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be a boolean.')
+              sendJson(res, 200, await controller.setProviderFailoverEnabled(
+                requiredString(body, 'providerId'),
+                body.enabled,
+              ))
+              return
+            }
+            if (action === '/failover/order') {
+              if (!Array.isArray(body.order) || body.order.some(entry => typeof entry !== 'string')) {
+                throw new HttpError(400, 'order must be an array of provider ids.')
+              }
+              sendJson(res, 200, await controller.setProviderFailoverOrder(body.order as string[]))
               return
             }
             if (action === '/account/proxy') {
