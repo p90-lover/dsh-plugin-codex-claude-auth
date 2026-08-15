@@ -70,7 +70,7 @@ export class AccountUsageMonitor {
   constructor(
     private readonly providerId: string,
     private readonly store: HarnessOAuthCredentialStore,
-    private readonly getProxy: () => string | undefined,
+    private readonly getProxy: (proxyId?: string) => string | undefined,
   ) {}
 
   async read(force = false): Promise<readonly PublicAccountWithUsage[]> {
@@ -90,7 +90,7 @@ export class AccountUsageMonitor {
         }
       }
       try {
-        return { ...account, usage: await withProviderProxy(this.getProxy(), () => fetchOpenAiUsage(credential)) }
+        return { ...account, usage: await withProviderProxy(this.getProxy(account.proxyId), () => fetchOpenAiUsage(credential)) }
       } catch (error) {
         return { ...account, usage: { source: 'unavailable', error: error instanceof Error ? error.message : String(error) } }
       }
@@ -110,7 +110,7 @@ export class AccountUsageMonitor {
     const usage = snapshot.find(account => account.id === active.account.id)?.usage
     if ((usage?.resetCredits ?? 0) < 1 || (usage?.usedPercent ?? 0) < 100) return undefined
     const record = active.credential as OAuthCredential & { accountId?: string }
-    const response = await withProviderProxy(this.getProxy(), () => fetch(
+    const response = await withProviderProxy(this.getProxy(active.account.proxyId), () => fetch(
       'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume',
       {
         method: 'POST',

@@ -11,7 +11,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { HarnessOAuthCredentialStore } from './credential-store.ts'
 import type { PublicAccountWithUsage } from './account-usage.ts'
 import type { AccountUsageMonitor } from './account-usage.ts'
-import type { ProviderProxySetting } from './proxy.ts'
+import type { ProviderProxySetting, PublicProxySetting } from './proxy.ts'
 
 const BODY_LIMIT_BYTES = 16 * 1024
 const API_ROOT = '/plugins/dsh-oauth-model-providers/oauth'
@@ -54,13 +54,7 @@ export interface BrowserOAuthState {
 export interface BrowserOAuthStatus {
   connected: boolean
   accounts: readonly PublicAccountWithUsage[]
-  proxy: {
-    configured: boolean
-    display?: string
-    source?: 'shared' | 'provider'
-    providerConfigured: boolean
-    sharedConfigured: boolean
-  }
+  proxy: PublicProxySetting
 }
 
 interface BrowserOAuthChange {
@@ -395,12 +389,14 @@ export class BrowserOAuthController {
     await this.proxy.refresh()
     const stored = await this.store.read(this.authProviderId)
     const connected = stored?.type === 'oauth'
+    const accounts = await this.usage.read()
+    this.proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
     if (connected) {
       this.setAvailable(true)
     }
     return {
       connected,
-      accounts: await this.usage.read(),
+      accounts,
       proxy: this.proxy.describe(),
     }
   }
@@ -441,15 +437,14 @@ export class BrowserOAuthController {
   async logout(): Promise<BrowserOAuthStatus> {
     this.active?.cancel()
     await this.models.logout(this.authProviderId)
+    this.proxy.setActiveAccountProxyId(undefined)
     this.usage.invalidate()
     this.setAvailable(false)
     return this.status()
   }
 
   async configureProxy(value: string | null, scope: 'provider' | 'shared'): Promise<BrowserOAuthStatus> {
-    if (this.active !== undefined && !this.active.isTerminal()) {
-      throw new HttpError(409, 'Cancel the active sign-in before changing the proxy.')
-    }
+    this.assertProxyEditable()
     if (scope === 'shared') {
       if (value === null) await this.proxy.unsetShared()
       else await this.proxy.setShared(value)
@@ -459,9 +454,7 @@ export class BrowserOAuthController {
   }
 
   async promoteProxy(): Promise<BrowserOAuthStatus> {
-    if (this.active !== undefined && !this.active.isTerminal()) {
-      throw new HttpError(409, 'Cancel the active sign-in before changing the proxy.')
-    }
+    this.assertProxyEditable()
     await this.proxy.promoteToShared()
     return this.status()
   }
@@ -485,9 +478,51 @@ export class BrowserOAuthController {
     this.active?.cancel()
     this.active = undefined
     await this.store.select(this.authProviderId, accountId)
+    const accounts = await this.store.accounts(this.authProviderId)
+    this.proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
     this.usage.invalidate()
     await this.models.refresh({ allowNetwork: true, force: true })
     this.setAvailable(true)
+    return this.status()
+  }
+
+  private assertProxyEditable(): void {
+    if (this.active !== undefined && !this.active.isTerminal()) {
+      throw new HttpError(409, 'Cancel the active sign-in before changing the proxy.')
+    }
+  }
+
+  async addProxy(label: string, value: string): Promise<BrowserOAuthStatus> {
+    this.assertProxyEditable()
+    await this.proxy.add(label, value)
+    return this.status()
+  }
+
+  async removeProxy(proxyId: string): Promise<BrowserOAuthStatus> {
+    this.assertProxyEditable()
+    await this.proxy.remove(proxyId)
+    return this.status()
+  }
+
+  async makeDefaultProxy(proxyId: string): Promise<BrowserOAuthStatus> {
+    this.assertProxyEditable()
+    await this.proxy.makeDefault(proxyId)
+    return this.status()
+  }
+
+  async assignProviderProxy(proxyId: string | undefined): Promise<BrowserOAuthStatus> {
+    this.assertProxyEditable()
+    await this.proxy.assignProvider(proxyId)
+    return this.status()
+  }
+
+  async assignAccountProxy(accountId: string, proxyId: string | undefined): Promise<BrowserOAuthStatus> {
+    this.assertProxyEditable()
+    if (proxyId !== undefined && !this.proxy.has(proxyId)) throw new HttpError(400, 'Proxy not found.')
+    await this.store.setProxy(this.authProviderId, accountId, proxyId)
+    const accounts = await this.store.accounts(this.authProviderId)
+    this.proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
+    this.usage.invalidate()
     return this.status()
   }
 
@@ -620,6 +655,40 @@ export function installBrowserOAuth(
                 body.usedPercent,
                 body.resetsAt,
               ))
+              return
+            }
+            if (action === '/account/proxy') {
+              const proxyId = body.proxyId
+              if (proxyId !== null && typeof proxyId !== 'string') {
+                throw new HttpError(400, 'proxyId must be a proxy id or null.')
+              }
+              sendJson(res, 200, await controller.assignAccountProxy(
+                requiredString(body, 'accountId'),
+                proxyId === null ? undefined : proxyId,
+              ))
+              return
+            }
+            if (action === '/proxy/entries/add') {
+              sendJson(res, 200, await controller.addProxy(
+                requiredString(body, 'label'),
+                requiredString(body, 'value'),
+              ))
+              return
+            }
+            if (action === '/proxy/entries/remove') {
+              sendJson(res, 200, await controller.removeProxy(requiredString(body, 'proxyId')))
+              return
+            }
+            if (action === '/proxy/default') {
+              sendJson(res, 200, await controller.makeDefaultProxy(requiredString(body, 'proxyId')))
+              return
+            }
+            if (action === '/proxy/provider') {
+              const proxyId = body.proxyId
+              if (proxyId !== null && typeof proxyId !== 'string') {
+                throw new HttpError(400, 'proxyId must be a proxy id or null.')
+              }
+              sendJson(res, 200, await controller.assignProviderProxy(proxyId === null ? undefined : proxyId))
               return
             }
             if (action === '/proxy') {

@@ -7,6 +7,13 @@ An experimental DeepSeek Harness bundle that adds two independent LLM routes:
 
 The bundle uses DeepSeek Harness services for model routing, a same-origin Settings wizard, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`. After sign-in, the plugin fetches the account's provider-owned model catalog and keeps the bundled `pi-ai` catalog as an offline/failure fallback.
 
+## Version 0.7.0 additions
+
+- Proxy management now has its own **Settings → Proxies** section instead of appearing inside OAuth enrollment cards.
+- Save multiple named HTTP(S) proxies once, see only their redacted hosts, and assign them independently to the OpenAI provider, Claude provider, or any saved OAuth account.
+- Account assignments override provider assignments. Unassigned accounts/providers use the first proxy in the list; **Make default** moves a proxy into that first position.
+- Existing single shared/provider proxy secrets migrate automatically into the reusable list without sending their URLs to the browser.
+
 ## Version 0.6.1 additions
 
 - OpenAI-only **Auto review** in the composer. It is enabled by default, remembered in the browser, runs only after a newly completed OpenAI Codex turn, skips its own reviewer turn, and deduplicates unchanged working-tree state.
@@ -41,7 +48,7 @@ DeepSeek Harness is currently a developer preview. Pin the versions above and ex
 Install the packed bundle into a Web profile:
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.6.1.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.7.0.tgz
 dsh --profile web
 ```
 
@@ -61,11 +68,11 @@ The bundle inserts both routes. It does not replace the built-in API-key provide
 
 In Harness Web:
 
-1. Open **Settings → OAuth Providers**.
-2. Optionally set a provider-specific HTTP(S) proxy. The secret URL is write-only in the Harness credential store.
+1. Optionally open **Settings → Proxies**, add one or more named HTTP(S) proxies, and select the proxy for each provider. The first proxy is the default; this provider choice also covers a new OAuth login before its account exists.
+2. Open **Settings → OAuth Providers**.
 3. Click **Add Codex OAuth** or **Add Claude OAuth** and complete the steps inside the provider card. No command, chat, or Harness question overlay is required.
 4. Open the provider sign-in page. The card polls the host-owned flow and automatically detects the local OAuth callback (`localhost:1455` for Codex or `localhost:53692` for Claude). Pasting the returned URL/code remains available as a fallback.
-5. After sign-in succeeds, the provider appears in **Settings → Models**. The plugin automatically refreshes the models available to that account and updates the model picker.
+5. After sign-in succeeds, the provider appears in **Settings → Models**. Return to **Settings → Proxies** if that account needs an override instead of its provider/default proxy.
 
 Use the English / 繁體中文 selector at the top of this section; English is the default for this plugin page.
 
@@ -100,6 +107,7 @@ Tokens are serialized as one JSON secret per provider through the Harness creden
 - Anthropic: `DSH_ANTHROPIC_OAUTH`
 - OpenAI proxy: `DSH_OPENAI_CODEX_PROXY`
 - Anthropic proxy: `DSH_ANTHROPIC_PROXY`
+- Reusable proxy list: `DSH_OAUTH_SHARED_PROXY`
 
 With the standard local credentials provider, those references live in the Harness credentials store under `$DSH_HOME`. The status command exposes only sign-in and expiry state, never token contents. Refresh writes are serialized within one Harness process.
 
@@ -107,13 +115,15 @@ Do not copy `.credentials.yaml`, logs containing redirect URLs, proxy URLs, or a
 
 ## Proxy behavior
 
-Each provider can use a different HTTP or HTTPS forward proxy. The proxy is applied with an async-scoped fetch dispatcher to OAuth token exchange/refresh and model requests. When a proxy is configured, model transport is forced to SSE so the request remains on the per-provider HTTP proxy path. SOCKS and PAC URLs are rejected.
+The first entry in the reusable proxy list is the default. A provider assignment overrides that default for its OAuth login and unassigned accounts; an account assignment overrides both. The same selected HTTP or HTTPS forward proxy is applied with an async-scoped fetch dispatcher to OAuth token exchange/refresh, usage/catalog checks, and model requests. When a proxy is selected, model transport is forced to SSE so the request remains on its HTTP proxy path. SOCKS and PAC URLs are rejected.
+
+Proxy URLs are write-only from the Settings client. Public status contains only the proxy ID, user-supplied name, redacted host, and provider/account assignment. Removing an assigned proxy safely falls back to the current first entry.
 
 The external sign-in website is opened by your browser, so that page still follows the browser's own proxy/network settings. The plugin proxy covers DSH host traffic; it does not silently reconfigure the browser or Windows.
 
 ## Automatic model discovery
 
-OpenAI Codex discovery reads the authenticated ChatGPT Codex catalog. Anthropic discovery reads the authenticated Models API, including capability and token-limit metadata when returned. Catalog traffic uses the same provider-specific proxy as OAuth and inference traffic.
+OpenAI Codex discovery reads the authenticated ChatGPT Codex catalog. Anthropic discovery reads the authenticated Models API, including capability and token-limit metadata when returned. Catalog and usage traffic use the same effective provider/account proxy as OAuth and inference traffic.
 
 If discovery is unavailable, times out, or returns an invalid response, the plugin keeps the last known catalog; on a fresh start it falls back to the bundled `pi-ai` models. A catalog failure does not remove an already connected provider.
 
@@ -143,7 +153,7 @@ pnpm test
 pnpm run build
 ```
 
-The focused tests cover remote compaction request/restore behavior, automatic and manual read-only review contracts, Codex tool definition/call/result identity, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, proxy URL redaction, and per-provider proxy stream options.
+The focused tests cover remote compaction request/restore behavior, automatic and manual read-only review contracts, Codex tool definition/call/result identity, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, reusable proxy migration/default/assignment precedence, proxy URL redaction, and proxy stream options.
 
 ## License
 

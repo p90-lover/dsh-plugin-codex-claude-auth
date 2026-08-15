@@ -64,7 +64,47 @@ describe('provider proxy', () => {
     })
   })
 
-  it('prefers one shared proxy and can promote a saved provider proxy without exposing credentials', async () => {
+  it('uses the first proxy by default and applies provider then account assignments without exposing credentials', async () => {
+    const values = new Map<string, string>()
+    const backend = {
+      resolve: async (key: CredentialRef) => values.has(key) ? { value: values.get(key)!, source: 'test' } : undefined,
+      describe: async (key: CredentialRef) => ({ configured: values.has(key), writable: true }),
+      set: async (key: CredentialRef, value: string) => { values.set(key, value) },
+      unset: async (key: CredentialRef) => { values.delete(key) },
+    }
+    const setting = new ProviderProxySetting(
+      backend,
+      'provider' as CredentialRef,
+      'shared' as CredentialRef,
+      'openai-codex',
+    )
+    const first = await setting.add('First', 'http://first-user:first-password@first.proxy.example:8080/')
+    const second = await setting.add('Second', 'https://second-user:second-password@second.proxy.example:8443/')
+
+    expect(setting.describe()).toMatchObject({
+      configured: true,
+      source: 'default',
+      defaultProxyId: first,
+      display: 'http://first.proxy.example:8080',
+    })
+    await setting.assignProvider(second)
+    expect(setting.describe()).toMatchObject({
+      source: 'provider',
+      providerProxyId: second,
+      display: 'https://second.proxy.example:8443',
+    })
+    setting.setActiveAccountProxyId(first)
+    expect(setting.describe()).toMatchObject({
+      source: 'account',
+      activeAccountProxyId: first,
+      display: 'http://first.proxy.example:8080',
+    })
+    expect(JSON.stringify(setting.describe())).not.toContain('test-password')
+    expect(JSON.stringify(setting.describe())).not.toContain('first-password')
+    expect(JSON.stringify(setting.describe())).not.toContain('second-password')
+  })
+
+  it('migrates legacy provider proxy values into the shared reusable list', async () => {
     const values = new Map<string, string>([['provider', 'http://test-user:test-password@proxy.example:8080/']])
     const backend = {
       resolve: async (key: CredentialRef) => values.has(key) ? { value: values.get(key)!, source: 'test' } : undefined,
@@ -72,10 +112,12 @@ describe('provider proxy', () => {
       set: async (key: CredentialRef, value: string) => { values.set(key, value) },
       unset: async (key: CredentialRef) => { values.delete(key) },
     }
-    const setting = new ProviderProxySetting(backend, 'provider' as CredentialRef, 'shared' as CredentialRef)
-    await setting.promoteToShared()
-    expect(setting.describe()).toMatchObject({ configured: true, source: 'shared', sharedConfigured: true })
+    const setting = new ProviderProxySetting(backend, 'provider' as CredentialRef, 'shared' as CredentialRef, 'anthropic')
+    await setting.refresh()
+
+    expect(setting.describe()).toMatchObject({ configured: true, source: 'provider', providerConfigured: true })
     expect(setting.describe().display).toBe('http://proxy.example:8080')
-    expect(JSON.stringify(setting.describe())).not.toContain('test-password')
+    expect(values.get('shared')).toContain('"version":1')
+    expect(values.get('provider')).not.toContain('test-password')
   })
 })

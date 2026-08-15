@@ -60,7 +60,12 @@ export function applyOAuthProvider(
   }
 
   const backend = credentialBackend(ctx.credentials)
-  const proxy = new ProviderProxySetting(backend, config.proxyCredentialRef, config.sharedProxyCredentialRef)
+  const proxy = new ProviderProxySetting(
+    backend,
+    config.proxyCredentialRef,
+    config.sharedProxyCredentialRef,
+    spec.authProviderId,
+  )
   const provider = proxyAwareProvider(
     openAiRemoteCompactionProvider(autoModelProvider(baseProvider, spec.modelCatalog)),
     () => proxy.value,
@@ -71,7 +76,11 @@ export function applyOAuthProvider(
   )
   const authModels: MutableModels = createModels({ credentials: store })
   authModels.setProvider(provider)
-  const usage = new AccountUsageMonitor(spec.authProviderId, store, () => proxy.value)
+  const usage = new AccountUsageMonitor(
+    spec.authProviderId,
+    store,
+    proxyId => proxy.valueForAssignment(proxyId),
+  )
 
   const routeProvider = routedProvider(provider, config.route, config.displayName)
   const profile: ResolvedPiAiProviderProfile = {
@@ -104,7 +113,10 @@ export function applyOAuthProvider(
     const reset = await usage.consumeActiveResetCredit()
     if (reset !== undefined) return { kind: 'reset' as const, from: reset, to: reset }
     const switched = await store.rotateNext(spec.authProviderId)
-    if (switched !== undefined) usage.invalidate()
+    if (switched !== undefined) {
+      proxy.setActiveAccountProxyId(switched.to.proxyId)
+      usage.invalidate()
+    }
     return switched
   })
 
@@ -181,9 +193,11 @@ export function applyOAuthProvider(
     const bootstrapRevision = availabilityRevision
     void Promise.all([
       store.read(spec.authProviderId),
+      store.accounts(spec.authProviderId),
       proxy.refresh().then(() => undefined),
-    ]).then(async ([stored]) => {
+    ]).then(async ([stored, accounts]) => {
       if (!live || availabilityRevision !== bootstrapRevision || stored?.type !== 'oauth') return
+      proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
       setAvailable(true)
       await refreshModels()
     }, (error) => {
@@ -205,9 +219,10 @@ export function applyOAuthProvider(
       return
     }
     if (ref !== config.credentialRef) return
-    void store.read(spec.authProviderId).then(
-      async stored => {
+    void Promise.all([store.read(spec.authProviderId), store.accounts(spec.authProviderId)]).then(
+      async ([stored, accounts]) => {
         const available = stored?.type === 'oauth'
+        proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
         setAvailable(available)
         if (available) await refreshModels(true)
       },

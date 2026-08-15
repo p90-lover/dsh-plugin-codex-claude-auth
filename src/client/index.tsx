@@ -127,6 +127,16 @@ const en = {
   autoCodeReviewOn: 'Auto review: On',
   autoCodeReviewOff: 'Auto review: Off',
   autoCodeReviewTitle: 'Automatically review new uncommitted changes after an OpenAI Codex turn',
+  proxyNav: 'Proxies', proxyPageTitle: 'Provider proxies',
+  proxyPageIntro: 'Save reusable HTTP(S) proxies once, then choose which provider and OAuth account uses each proxy.',
+  proxyList: 'Saved proxies', proxyName: 'Proxy name', proxyNamePlaceholder: 'Example: US proxy',
+  addProxy: 'Add proxy', noProxyEntries: 'No proxies saved. Add the first proxy to make it the default.',
+  defaultProxy: 'Default', makeDefault: 'Make default', proxyAssignments: 'Provider and account assignments',
+  providerRoute: '{provider} provider traffic', accountRoute: '{provider} · {account}',
+  inheritProxy: 'Default (first proxy)', removeProxyEntry: 'Remove',
+  proxyAssignmentHelp: 'An account choice overrides its provider choice. Anything left on Default uses the first proxy in the list.',
+  proxySecretHelp: 'Proxy URLs are write-only secrets. DSH shows only the saved name and redacted host.',
+  proxyAdded: 'Proxy added securely.', proxyDefaultChanged: 'Default proxy changed.', proxyAssignmentSaved: 'Proxy assignment saved.',
 }
 
 const zh: { [Key in keyof typeof en]: string } = {
@@ -151,11 +161,20 @@ const zh: { [Key in keyof typeof en]: string } = {
   autoCodeReviewOn: '自動審查：開啟',
   autoCodeReviewOff: '自動審查：關閉',
   autoCodeReviewTitle: 'OpenAI Codex 回合完成後，自動審查新的未提交變更',
+  proxyNav: '代理伺服器', proxyPageTitle: '提供者代理伺服器',
+  proxyPageIntro: '只需儲存一次可重複使用的 HTTP(S) 代理，再選擇每個提供者與 OAuth 帳號要使用的代理。',
+  proxyList: '已儲存的代理', proxyName: '代理名稱', proxyNamePlaceholder: '例如：美國代理',
+  addProxy: '新增代理', noProxyEntries: '尚未儲存代理。新增的第一個代理會成為預設值。',
+  defaultProxy: '預設', makeDefault: '設為預設', proxyAssignments: '提供者與帳號指派',
+  providerRoute: '{provider} 提供者流量', accountRoute: '{provider} · {account}',
+  inheritProxy: '預設（第一個代理）', removeProxyEntry: '移除',
+  proxyAssignmentHelp: '帳號選擇會覆蓋提供者選擇。保持「預設」的項目會使用清單中第一個代理。',
+  proxySecretHelp: '代理網址是只寫入的機密資料；DSH 只會顯示儲存名稱與已遮蔽的主機。',
+  proxyAdded: '代理已安全新增。', proxyDefaultChanged: '預設代理已更新。', proxyAssignmentSaved: '代理指派已儲存。',
 }
 
 type OAuthSettingsKey = keyof typeof en
 type ProviderId = 'codex' | 'claude'
-type ProxyScope = 'shared' | ProviderId
 type Language = 'en' | 'zh-TW'
 type Phase = 'starting' | 'input' | 'authorizing' | 'device_code' | 'complete' | 'error' | 'cancelled'
 
@@ -165,16 +184,28 @@ interface ProviderStatus {
   proxy: {
     configured: boolean
     display?: string
-    source?: 'shared' | 'provider'
+    source?: 'account' | 'provider' | 'default'
     providerConfigured: boolean
     sharedConfigured: boolean
+    entries: readonly ProxyEntry[]
+    defaultProxyId?: string
+    providerProxyId?: string
+    activeAccountProxyId?: string
   }
+}
+
+interface ProxyEntry {
+  id: string
+  label: string
+  display: string
+  default: boolean
 }
 
 interface OAuthAccount {
   id: string
   label: string
   active: boolean
+  proxyId?: string
   useResetCredit: boolean
   configuredUsage?: { usedPercent: number; resetsAt?: number }
   usage: {
@@ -227,8 +258,11 @@ interface SettingsInjected {
   respond: (provider: ProviderCard, flowId: string, promptId: string, value: string) => Promise<FlowState>
   cancel: (provider: ProviderCard, flowId: string) => Promise<FlowState>
   logout: (provider: ProviderCard) => Promise<ProviderStatus>
-  configureProxy: (provider: ProviderCard, value: string | null, scope: 'provider' | 'shared') => Promise<ProviderStatus>
-  promoteProxy: (provider: ProviderCard) => Promise<ProviderStatus>
+  addProxy: (provider: ProviderCard, label: string, value: string) => Promise<ProviderStatus>
+  removeProxy: (provider: ProviderCard, proxyId: string) => Promise<ProviderStatus>
+  makeDefaultProxy: (provider: ProviderCard, proxyId: string) => Promise<ProviderStatus>
+  assignProviderProxy: (provider: ProviderCard, proxyId: string | null) => Promise<ProviderStatus>
+  assignAccountProxy: (provider: ProviderCard, accountId: string, proxyId: string | null) => Promise<ProviderStatus>
   refreshSession: (provider: ProviderCard) => Promise<ProviderStatus>
   selectAccount: (provider: ProviderCard, accountId: string) => Promise<ProviderStatus>
   configureResetCredit: (provider: ProviderCard, accountId: string, enabled: boolean) => Promise<ProviderStatus>
@@ -421,8 +455,6 @@ function OAuthSettingsSection(props: SettingsProps): ReactNode {
     || typeof candidate.respond !== 'function'
     || typeof candidate.cancel !== 'function'
     || typeof candidate.logout !== 'function'
-    || typeof candidate.configureProxy !== 'function'
-    || typeof candidate.promoteProxy !== 'function'
     || typeof candidate.refreshSession !== 'function'
     || typeof candidate.selectAccount !== 'function'
     || typeof candidate.configureResetCredit !== 'function'
@@ -439,7 +471,7 @@ function OAuthSettingsSection(props: SettingsProps): ReactNode {
 
 function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
   const {
-    describe, start, flow, respond, cancel, logout, configureProxy, promoteProxy,
+    describe, start, flow, respond, cancel, logout,
     refreshSession, selectAccount, configureResetCredit, subscribe,
     configureUsage,
   } = props
@@ -450,8 +482,6 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
   const [busy, setBusy] = useState<ProviderId>()
   const [active, setActive] = useState<Partial<Record<ProviderId, FlowState>>>({})
   const [manualValues, setManualValues] = useState<Record<ProviderId, string>>({ codex: '', claude: '' })
-  const [proxyValues, setProxyValues] = useState<Record<ProviderId, string>>({ codex: '', claude: '' })
-  const [proxyScope, setProxyScope] = useState<ProxyScope>('shared')
   const [notice, setNotice] = useState<{ provider: ProviderId; error?: string; message?: OAuthSettingsKey }>()
   const loadGeneration = useRef(0)
 
@@ -565,21 +595,6 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
     }
   }
 
-  const saveProxy = async (provider: ProviderCard, value: string | null, scope: 'provider' | 'shared' = 'provider'): Promise<void> => {
-    setBusy(provider.id)
-    setNotice(undefined)
-    try {
-      const status = await configureProxy(provider, value, scope)
-      setStatuses(current => current === undefined ? current : { ...current, [provider.id]: status })
-      setProxyValues(current => ({ ...current, [provider.id]: '' }))
-      setNotice({ provider: provider.id, message: value === null ? 'proxyRemoved' : 'proxySaved' })
-    } catch (error) {
-      setNotice({ provider: provider.id, error: messageOf(error) })
-    } finally {
-      setBusy(undefined)
-    }
-  }
-
   const updateProvider = async (
     provider: ProviderCard,
     operation: () => Promise<ProviderStatus>,
@@ -616,9 +631,6 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
           const statusText = loading ? format(copy, 'checking') : loadError !== undefined ? format(copy, 'unavailable') : connected === true ? format(copy, 'connected') : format(copy, 'disconnected')
           const isBusy = busy === provider.id
           const providerFlow = active[provider.id]
-          const proxyValue = proxyValues[provider.id]
-          const proxyTarget = providers.find(candidate => candidate.id === (proxyScope === 'shared' ? provider.id : proxyScope)) ?? provider
-          const selectedProxyStatus = statuses?.[proxyTarget.id]
           const providerNotice = notice?.provider === provider.id ? notice : undefined
           return (
             <article key={provider.id} style={card} data-oauth-provider={provider.id}>
@@ -729,54 +741,215 @@ function LoadedOAuthSettingsSection(props: SettingsProps): ReactNode {
                       cancel={() => { void stop(provider) }}
                     />
                   )}
-              <div style={proxyGrid}>
-                <span style={nameStyle}>{format(copy, 'proxyTitle')}</span>
-                <p style={detail}>{format(copy, 'proxyHelp')}</p>
-                <p style={detail}>{format(copy, 'proxyBrowserNote')}</p>
-                <p style={detail}>
-                  {providerStatus?.proxy.configured === true
-                    ? `${format(copy, 'proxyConfigured', { proxy: providerStatus.proxy.display ?? 'HTTP(S)' })} · ${format(copy, providerStatus.proxy.source === 'shared' ? 'sharedProxySource' : 'providerProxySource')}`
-                    : format(copy, 'proxyNotConfigured')}
-                </p>
-                <label style={detail}>
-                  {format(copy, 'proxyScope')}{' '}
-                  <select value={proxyScope} onChange={(event) => { setProxyScope(event.currentTarget.value as ProxyScope) }}>
-                    <option value="shared">{format(copy, 'sharedProxy')}</option>
-                    <option value="codex">{format(copy, 'codexProxy')}</option>
-                    <option value="claude">{format(copy, 'claudeProxy')}</option>
-                  </select>
-                </label>
-                <div style={inputRow}>
-                  <input
-                    aria-label={`${format(copy, provider.name)} ${format(copy, 'proxyTitle')}`}
-                    style={inputStyle}
-                    type="password"
-                    value={proxyValue}
-                    placeholder={format(copy, 'proxyPlaceholder')}
-                    autoComplete="off"
-                    spellCheck={false}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value
-                      setProxyValues(current => ({ ...current, [provider.id]: value }))
-                    }}
-                  />
-                  <Button variant="outline" size="sm" disabled={busy !== undefined || proxyValue.trim().length === 0} onClick={() => { void saveProxy(proxyTarget, proxyValue, proxyScope === 'shared' ? 'shared' : 'provider') }}>
-                    {isBusy ? format(copy, 'savingProxy') : format(copy, selectedProxyStatus?.proxy.configured === true ? 'replaceProxy' : 'saveProxy')}
-                  </Button>
-                  {(proxyScope === 'shared' ? selectedProxyStatus?.proxy.sharedConfigured : selectedProxyStatus?.proxy.providerConfigured) === true
-                    ? <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void saveProxy(proxyTarget, null, proxyScope === 'shared' ? 'shared' : 'provider') }}>{format(copy, 'removeProxy')}</Button>
-                    : null}
-                  {providerStatus?.proxy.providerConfigured === true && providerStatus.proxy.sharedConfigured !== true
-                    ? <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void updateProvider(provider, () => promoteProxy(provider)) }}>{format(copy, 'reuseForBoth')}</Button>
-                    : null}
-                </div>
-              </div>
               {providerNotice?.error === undefined ? null : <p role="alert" style={errorStyle}>{format(copy, 'failed')}: {providerNotice.error}</p>}
               {providerNotice?.message === undefined ? null : <p role="status" style={successStyle}>{format(copy, providerNotice.message)}</p>}
             </article>
           )
         })}
       </div>
+      <p style={securityStyle}>{format(copy, 'security')}</p>
+    </section>
+  )
+}
+
+function ProxySettingsSection(props: SettingsProps): ReactNode {
+  const candidate = props as Partial<SettingsInjected>
+  if (typeof candidate.describe !== 'function'
+    || typeof candidate.addProxy !== 'function'
+    || typeof candidate.removeProxy !== 'function'
+    || typeof candidate.makeDefaultProxy !== 'function'
+    || typeof candidate.assignProviderProxy !== 'function'
+    || typeof candidate.assignAccountProxy !== 'function'
+    || typeof candidate.subscribe !== 'function') {
+    return (
+      <section style={page} aria-busy="true" aria-live="polite">
+        <p style={intro}>Loading proxies… / 正在載入代理伺服器…</p>
+      </section>
+    )
+  }
+  return <LoadedProxySettingsSection {...props} />
+}
+
+function LoadedProxySettingsSection(props: SettingsProps): ReactNode {
+  const {
+    describe, addProxy, removeProxy, makeDefaultProxy,
+    assignProviderProxy, assignAccountProxy, subscribe,
+  } = props
+  const [language, setLanguage] = useState<Language>(loadLanguage)
+  const copy = language === 'zh-TW' ? zh : en
+  const [statuses, setStatuses] = useState<Record<ProviderId, ProviderStatus>>()
+  const [loadError, setLoadError] = useState<string>()
+  const [busy, setBusy] = useState<string>()
+  const [notice, setNotice] = useState<{ error?: string; message?: OAuthSettingsKey }>()
+  const [label, setLabel] = useState('')
+  const [proxyUrl, setProxyUrl] = useState('')
+  const loadGeneration = useRef(0)
+
+  const load = useCallback(async (): Promise<void> => {
+    const generation = ++loadGeneration.current
+    try {
+      const next = await describe()
+      if (generation !== loadGeneration.current) return
+      setStatuses(next)
+      setLoadError(undefined)
+    } catch (error) {
+      if (generation !== loadGeneration.current) return
+      setLoadError(messageOf(error))
+    }
+  }, [describe])
+
+  useEffect(() => {
+    void load()
+    const dispose = subscribe(() => { void load() })
+    return () => {
+      loadGeneration.current += 1
+      dispose()
+    }
+  }, [load, subscribe])
+
+  const entries = statuses?.codex.proxy.entries ?? statuses?.claude.proxy.entries ?? []
+  const validProxyId = (proxyId: string | undefined): string =>
+    proxyId !== undefined && entries.some(entry => entry.id === proxyId) ? proxyId : ''
+
+  const run = async (
+    id: string,
+    operation: () => Promise<ProviderStatus>,
+    message: OAuthSettingsKey,
+  ): Promise<boolean> => {
+    setBusy(id)
+    setNotice(undefined)
+    try {
+      await operation()
+      await load()
+      setNotice({ message })
+      return true
+    } catch (error) {
+      setNotice({ error: messageOf(error) })
+      return false
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const switchLanguage = (next: Language): void => {
+    setLanguage(next)
+    saveLanguage(next)
+  }
+
+  return (
+    <section style={page} aria-labelledby="proxy-settings-title" data-proxy-settings>
+      <div style={titleRow}>
+        <h2 id="proxy-settings-title" style={heading}>{format(copy, 'proxyPageTitle')}</h2>
+        <div style={languageGroup} aria-label={format(copy, 'language')}>
+          <button type="button" style={languageButton(language === 'en')} aria-pressed={language === 'en'} onClick={() => { switchLanguage('en') }}>{format(copy, 'english')}</button>
+          <button type="button" style={languageButton(language === 'zh-TW')} aria-pressed={language === 'zh-TW'} onClick={() => { switchLanguage('zh-TW') }}>{format(copy, 'traditionalChinese')}</button>
+        </div>
+      </div>
+      <p style={intro}>{format(copy, 'proxyPageIntro')}</p>
+      <article style={card}>
+        <span style={nameStyle}>{format(copy, 'proxyList')}</span>
+        <form style={inputRow} onSubmit={(event) => {
+          event.preventDefault()
+          const target = providers[0]!
+          void run('add', () => addProxy(target, label, proxyUrl), 'proxyAdded').then((saved) => {
+            if (saved) {
+              setLabel('')
+              setProxyUrl('')
+            }
+          })
+        }}>
+          <input
+            style={{ ...inputStyle, flex: '1 1 180px' }}
+            aria-label={format(copy, 'proxyName')}
+            value={label}
+            placeholder={format(copy, 'proxyNamePlaceholder')}
+            maxLength={80}
+            onChange={(event) => { setLabel(event.currentTarget.value) }}
+          />
+          <input
+            style={inputStyle}
+            aria-label={format(copy, 'proxyTitle')}
+            type="password"
+            value={proxyUrl}
+            placeholder={format(copy, 'proxyPlaceholder')}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => { setProxyUrl(event.currentTarget.value) }}
+          />
+          <Button variant="primary" size="sm" type="submit" disabled={busy !== undefined || label.trim().length === 0 || proxyUrl.trim().length === 0}>
+            {busy === 'add' ? format(copy, 'savingProxy') : format(copy, 'addProxy')}
+          </Button>
+        </form>
+        <p style={detail}>{format(copy, 'proxySecretHelp')}</p>
+        <p style={detail}>{format(copy, 'proxyBrowserNote')}</p>
+        {entries.length === 0
+          ? <p style={detail}>{format(copy, 'noProxyEntries')}</p>
+          : (
+              <div style={accountList}>
+                {entries.map(entry => (
+                  <div key={entry.id} style={accountRow} data-proxy-entry={entry.id}>
+                    <div style={identity}>
+                      <span style={nameStyle}>{entry.label} {entry.default ? <span style={successStyle}>· {format(copy, 'defaultProxy')}</span> : null}</span>
+                      <span style={routeStyle}>{entry.display}</span>
+                    </div>
+                    <div style={actionRow}>
+                      {entry.default
+                        ? null
+                        : <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void run(`default:${entry.id}`, () => makeDefaultProxy(providers[0]!, entry.id), 'proxyDefaultChanged') }}>{format(copy, 'makeDefault')}</Button>}
+                      <Button variant="outline" size="sm" disabled={busy !== undefined} onClick={() => { void run(`remove:${entry.id}`, () => removeProxy(providers[0]!, entry.id), 'proxyRemoved') }}>{format(copy, 'removeProxyEntry')}</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+      </article>
+      <article style={card}>
+        <span style={nameStyle}>{format(copy, 'proxyAssignments')}</span>
+        <p style={detail}>{format(copy, 'proxyAssignmentHelp')}</p>
+        {providers.map((provider) => {
+          const status = statuses?.[provider.id]
+          const providerName = format(copy, provider.name)
+          return (
+            <div key={provider.id} style={accountList} data-proxy-provider={provider.id}>
+              <label style={accountRow}>
+                <span style={nameStyle}>{format(copy, 'providerRoute', { provider: providerName })}</span>
+                <select
+                  aria-label={format(copy, 'providerRoute', { provider: providerName })}
+                  disabled={busy !== undefined || entries.length === 0}
+                  value={validProxyId(status?.proxy.providerProxyId)}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value
+                    void run(`provider:${provider.id}`, () => assignProviderProxy(provider, value.length === 0 ? null : value), 'proxyAssignmentSaved')
+                  }}
+                >
+                  <option value="">{format(copy, 'inheritProxy')}</option>
+                  {entries.map(entry => <option key={entry.id} value={entry.id}>{entry.label} — {entry.display}</option>)}
+                </select>
+              </label>
+              {status?.accounts.map(account => (
+                <label key={account.id} style={accountRow} data-proxy-account={`${provider.id}:${account.id}`}>
+                  <span style={detail}>{format(copy, 'accountRoute', { provider: providerName, account: account.label })}</span>
+                  <select
+                    aria-label={format(copy, 'accountRoute', { provider: providerName, account: account.label })}
+                    disabled={busy !== undefined || entries.length === 0}
+                    value={validProxyId(account.proxyId)}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value
+                      void run(`account:${provider.id}:${account.id}`, () => assignAccountProxy(provider, account.id, value.length === 0 ? null : value), 'proxyAssignmentSaved')
+                    }}
+                  >
+                    <option value="">{format(copy, 'inheritProxy')}</option>
+                    {entries.map(entry => <option key={entry.id} value={entry.id}>{entry.label} — {entry.display}</option>)}
+                  </select>
+                </label>
+              ))}
+            </div>
+          )
+        })}
+      </article>
+      {loadError === undefined ? null : <p role="alert" style={errorStyle}>{format(copy, 'failed')}: {loadError}</p>}
+      {notice?.error === undefined ? null : <p role="alert" style={errorStyle}>{notice.error}</p>}
+      {notice?.message === undefined ? null : <p role="status" style={successStyle}>{format(copy, notice.message)}</p>}
       <p style={securityStyle}>{format(copy, 'security')}</p>
     </section>
   )
@@ -956,8 +1129,11 @@ export function apply(ctx: ClientContext): void {
     respond: (provider, flowId, promptId, value) => postJson(provider, '/respond', { flowId, promptId, value }),
     cancel: (provider, flowId) => postJson(provider, '/cancel', { flowId }),
     logout: provider => postJson(provider, '/logout', {}),
-    configureProxy: (provider, value, scope) => postJson(provider, '/proxy', { value, scope }),
-    promoteProxy: provider => postJson(provider, '/proxy/promote', {}),
+    addProxy: (provider, label, value) => postJson(provider, '/proxy/entries/add', { label, value }),
+    removeProxy: (provider, proxyId) => postJson(provider, '/proxy/entries/remove', { proxyId }),
+    makeDefaultProxy: (provider, proxyId) => postJson(provider, '/proxy/default', { proxyId }),
+    assignProviderProxy: (provider, proxyId) => postJson(provider, '/proxy/provider', { proxyId }),
+    assignAccountProxy: (provider, accountId, proxyId) => postJson(provider, '/account/proxy', { accountId, proxyId }),
     refreshSession: provider => postJson(provider, '/refresh', {}),
     selectAccount: (provider, accountId) => postJson(provider, '/account/select', { accountId }),
     configureResetCredit: (provider, accountId, enabled) => postJson(provider, '/account/reset-credit', { accountId, enabled }),
@@ -980,6 +1156,15 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     inject: injected,
   }, OAuthSettingsSection))
+
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
+    id: 'oauth-proxies',
+    order: 16,
+    label: () => ctx.locale.bind(NS)('proxyNav'),
+    locale: NS,
+    inject: injected,
+  }, ProxySettingsSection))
 
   ctx.inject(['remote.commands'], (reviewCtx) => {
     reviewCtx.slots.inject('conversation.input.left', () => reviewCtx.slots.register({

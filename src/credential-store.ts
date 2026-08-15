@@ -54,6 +54,7 @@ interface StoredAccount {
   id: string
   label: string
   credential: OAuthCredential
+  proxyId?: string
   useResetCredit?: boolean
   configuredUsage?: { usedPercent: number; resetsAt?: number }
 }
@@ -68,6 +69,7 @@ export interface PublicOAuthAccount {
   id: string
   label: string
   active: boolean
+  proxyId?: string
   useResetCredit: boolean
   configuredUsage?: { usedPercent: number; resetsAt?: number }
 }
@@ -122,6 +124,7 @@ function parseStoredValue(value: string, providerId: string, ref: CredentialRef)
           id: typeof item.id === 'string' && item.id.length > 0 ? item.id : identity.id,
           label: typeof item.label === 'string' && item.label.length > 0 ? item.label : identity.label,
           credential,
+          ...typeof item.proxyId === 'string' && item.proxyId.length > 0 ? { proxyId: item.proxyId } : {},
           useResetCredit: item.useResetCredit === true,
           ...usedPercent === undefined ? {} : {
             configuredUsage: { usedPercent, ...(resetsAt === undefined ? {} : { resetsAt }) },
@@ -216,6 +219,9 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
         const account = {
           ...identity,
           credential: next,
+          ...matching >= 0 && bundle.accounts[matching]!.proxyId !== undefined
+            ? { proxyId: bundle.accounts[matching]!.proxyId }
+            : {},
           useResetCredit: matching >= 0 ? bundle.accounts[matching]!.useResetCredit === true : false,
         }
         const accounts = matching < 0
@@ -252,6 +258,7 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
       id: account.id,
       label: account.label,
       active: account.id === bundle.activeAccountId,
+      ...account.proxyId === undefined ? {} : { proxyId: account.proxyId },
       useResetCredit: account.useResetCredit === true,
       ...account.configuredUsage === undefined ? {} : { configuredUsage: { ...account.configuredUsage } },
     }))
@@ -280,6 +287,27 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
         accounts: bundle.accounts.map(account => account.id === accountId
           ? { ...account, useResetCredit: enabled }
           : account),
+      }))
+    })
+  }
+
+  setProxy(providerId: string, accountId: string, proxyId: string | undefined): Promise<void> {
+    const ref = this.ref(providerId)
+    return this.enqueue(providerId, async () => {
+      const resolved = await this.backend.resolve(ref)
+      if (resolved === undefined) throw new Error('No OAuth accounts are saved.')
+      const bundle = parseStoredValue(resolved.value, providerId, ref)
+      if (!bundle.accounts.some(account => account.id === accountId)) throw new Error('OAuth account not found.')
+      await this.backend.set(ref, JSON.stringify({
+        ...bundle,
+        accounts: bundle.accounts.map((account) => {
+          if (account.id !== accountId) return account
+          if (proxyId === undefined) {
+            const { proxyId: _removed, ...rest } = account
+            return rest
+          }
+          return { ...account, proxyId }
+        }),
       }))
     })
   }
@@ -318,6 +346,7 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
         id: account.id,
         label: account.label,
         active: account.id === bundle.activeAccountId,
+        ...account.proxyId === undefined ? {} : { proxyId: account.proxyId },
         useResetCredit: account.useResetCredit === true,
         ...account.configuredUsage === undefined ? {} : { configuredUsage: { ...account.configuredUsage } },
       },
