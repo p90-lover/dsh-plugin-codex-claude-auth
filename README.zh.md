@@ -7,6 +7,10 @@
 
 此組合包使用 DeepSeek Harness 的模型路由、同來源設定精靈與持久憑證參照服務。OAuth 登入與更新由 `@earendil-works/pi-ai` 提供。登入後，外掛會取得該帳號由提供者回傳的模型清單，並保留 `pi-ai` 內建清單作為離線或失敗時的備援。
 
+## 0.7.1 修正
+
+- OAuth 提供者與代理伺服器現在共用同一個交易式設定頁生命週期，避免重新連線或切換頁面後，已選取的頁面偶發顯示空白。
+
 ## 0.7.0 新增功能
 
 - 代理管理已從 OAuth 登入卡片移至獨立的 **設定 → 代理伺服器** 頁面。
@@ -39,7 +43,7 @@ DeepSeek Harness 目前仍是開發者預覽版。請鎖定以上版本，並預
 將打包檔安裝到 Web profile：
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.7.0.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.7.1.tgz
 dsh --profile web
 ```
 

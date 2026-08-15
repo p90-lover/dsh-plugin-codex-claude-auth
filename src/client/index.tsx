@@ -1148,23 +1148,25 @@ export function apply(ctx: ClientContext): void {
     },
   })
 
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section',
-    id: 'oauth-providers',
-    order: 15,
-    label: () => ctx.locale.bind(NS)('nav'),
-    locale: NS,
-    inject: injected,
-  }, OAuthSettingsSection))
+  ctx.slots.inject('settings.section', function* () {
+    yield ctx.slots.register({
+      name: 'settings.section',
+      id: 'oauth-providers',
+      order: 15,
+      label: () => ctx.locale.bind(NS)('nav'),
+      locale: NS,
+      inject: injected,
+    }, OAuthSettingsSection)
 
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section',
-    id: 'oauth-proxies',
-    order: 16,
-    label: () => ctx.locale.bind(NS)('proxyNav'),
-    locale: NS,
-    inject: injected,
-  }, ProxySettingsSection))
+    yield ctx.slots.register({
+      name: 'settings.section',
+      id: 'oauth-proxies',
+      order: 16,
+      label: () => ctx.locale.bind(NS)('proxyNav'),
+      locale: NS,
+      inject: injected,
+    }, ProxySettingsSection)
+  })
 
   ctx.inject(['remote.commands'], (reviewCtx) => {
     reviewCtx.slots.inject('conversation.input.left', () => reviewCtx.slots.register({

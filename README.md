@@ -7,6 +7,10 @@ An experimental DeepSeek Harness bundle that adds two independent LLM routes:
 
 The bundle uses DeepSeek Harness services for model routing, a same-origin Settings wizard, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`. After sign-in, the plugin fetches the account's provider-owned model catalog and keeps the bundled `pi-ai` catalog as an offline/failure fallback.
 
+## Version 0.7.1 fix
+
+- OAuth Providers and Proxies now share one transactional Settings-slot lifecycle, preventing either selected page from intermittently rendering blank after reconnects or navigation changes.
+
 ## Version 0.7.0 additions
 
 - Proxy management now has its own **Settings → Proxies** section instead of appearing inside OAuth enrollment cards.
@@ -48,7 +52,7 @@ DeepSeek Harness is currently a developer preview. Pin the versions above and ex
 Install the packed bundle into a Web profile:
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.7.0.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.7.1.tgz
 dsh --profile web
 ```
 
