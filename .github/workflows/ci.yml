@@ -39,6 +39,14 @@ jobs:
       - name: Apply final review fixes
         if: ${{ hashFiles('scripts/final-review-fixes.mjs') != '' }}
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/final-review-fixes.mjs')
+          source = path.read_text(encoding='utf-8')
+          source = source.replace(r'\\`compaction-basic\\`', 'compaction-basic')
+          source = source.replace(r'\\`thresholdRatio\\`', 'thresholdRatio')
+          path.write_text(source, encoding='utf-8')
+          PY
           node scripts/final-review-fixes.mjs
           rm scripts/final-review-fixes.mjs
 
