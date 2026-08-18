@@ -3,12 +3,12 @@ name: CI
 on:
   push:
     branches:
-      - feat/context-usage-failover-effort
+      - main
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -21,8 +21,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -35,56 +33,14 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Install current dependencies
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Apply staged tests and prove the regression
-        if: ${{ hashFiles('scripts/apply-tests.mjs') != '' }}
-        shell: bash
-        run: |
-          node scripts/apply-tests.mjs
-          set +e
-          pnpm exec vitest run \
-            tests/context-window.spec.ts \
-            tests/provider-usage.spec.ts \
-            tests/failover-effort.spec.ts
-          status=$?
-          set -e
-          if [ "$status" -eq 0 ]; then
-            echo "Regression tests unexpectedly passed before the implementation was applied."
-            exit 1
-          fi
-          echo "Regression tests failed before implementation as expected."
-
-      - name: Apply staged implementation and refresh lockfile
-        if: ${{ hashFiles('scripts/apply-tests.mjs') != '' }}
-        run: |
-          node scripts/apply-core.mjs
-          node scripts/apply-client.mjs
-          node scripts/apply-release.mjs
-          node scripts/apply-fixes.mjs
-          rm scripts/apply-tests.mjs scripts/apply-core.mjs scripts/apply-client.mjs scripts/apply-release.mjs scripts/apply-fixes.mjs
-          pnpm install --no-frozen-lockfile
 
       - name: Run typecheck, tests, and production build
         run: pnpm run check
 
-      - name: Check generated diff
+      - name: Check repository diff
         run: git diff --check
-
-      - name: Commit verified staged implementation
-        if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
-        shell: bash
-        run: |
-          if git diff --quiet && [ -z "$(git status --porcelain)" ]; then
-            echo "No generated changes to commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: add active-provider usage and extended context controls"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Pack plugin
         run: |
