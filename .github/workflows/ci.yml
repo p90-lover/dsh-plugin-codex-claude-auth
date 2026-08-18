@@ -62,7 +62,8 @@ jobs:
           node scripts/apply-core.mjs
           node scripts/apply-client.mjs
           node scripts/apply-release.mjs
-          rm scripts/apply-tests.mjs scripts/apply-core.mjs scripts/apply-client.mjs scripts/apply-release.mjs
+          node scripts/apply-fixes.mjs
+          rm scripts/apply-tests.mjs scripts/apply-core.mjs scripts/apply-client.mjs scripts/apply-release.mjs scripts/apply-fixes.mjs
           pnpm install --no-frozen-lockfile
 
       - name: Run typecheck, tests, and production build
