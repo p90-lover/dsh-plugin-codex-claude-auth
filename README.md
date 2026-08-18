@@ -55,9 +55,9 @@ The legacy `/login-openai`, `/login-claude`, `/status-openai`, and `/status-clau
 
 ## Remote compaction and code review
 
-This bundle configures DSH automatic compaction at 90% of the effective model context window. For the OpenAI OAuth route, that means 226,800 tokens at 252K, 317,700 at 353K, 450,000 at 500K, 900,000 at 1M, or floor(custom × 0.9). Manual compaction remains available through DSH.
+Automatic compaction timing is owned by the active DSH agent preset. With the pinned DSH 0.1.0-rc.6 packages, compaction-basic defaults to 80% of the effective routed-model context unless the preset or user configuration changes thresholdRatio. This bundle does not mount a second compaction service.
 
-When DSH starts either automatic or manual compaction on the OpenAI OAuth route, the plugin sends the full Responses input to OpenAI's provider-native remote compaction endpoint. Its canonical output is stored inside the DSH checkpoint and expanded back into the next request without pruning. The plugin does not launch the Codex CLI or type /compact; it uses the same OpenAI compaction service directly. If that endpoint fails, the same compaction attempt continues through DSH's local summary path.
+When DSH starts either automatic or manual compaction on the OpenAI OAuth route, the plugin sends the full Responses input to OpenAI's provider-native remote compaction endpoint. Its canonical output is stored inside the DSH checkpoint and expanded back into the next request without pruning. The plugin does not launch the Codex CLI or type /compact. If that endpoint fails, the same compaction attempt continues through DSH's local summary path.
 
 Click **Code review** in the composer to review staged, unstaged, and untracked changes without modifying files. The equivalent commands are:
 

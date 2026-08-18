@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-model-selection/client'
 import { Button, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
+  contextControlValue,
   formatContextWindow,
   isPresetContextWindow,
   latestProviderFromNodes,
@@ -139,7 +140,6 @@ const en = {
   composerUsage: 'Usage', composerUsageLoading: 'Usage…', composerUsageUnavailable: 'Usage unavailable',
   contextWindow: 'Context', contextWindowTitle: 'OpenAI context window', contextWindowSaved: 'Context window saved',
   contextWindowCustom: 'Custom', contextWindowRange: 'Custom range: {minimum}–{maximum}',
-  contextAutoCompact: 'Auto-compact at {tokens} (90%)',
   failoverNav: 'Failover', failoverTitle: 'Automatic provider failover',
   failoverIntro: 'Retry the current provider with another account first, then try one enabled provider below. A second provider failure ends the turn.',
   failoverAutoMiddle: 'Auto (middle: {model})', failoverProviderModel: '{provider} default model',
@@ -186,7 +186,6 @@ const zh: { [Key in keyof typeof en]: string } = {
   composerUsage: '用量', composerUsageLoading: '用量…', composerUsageUnavailable: '無法取得用量',
   contextWindow: '上下文', contextWindowTitle: 'OpenAI 上下文視窗', contextWindowSaved: '上下文視窗已儲存',
   contextWindowCustom: '自訂', contextWindowRange: '自訂範圍：{minimum}–{maximum}',
-  contextAutoCompact: '在 {tokens}（90%）自動壓縮',
   failoverNav: '自動切換', failoverTitle: '自動切換提供者',
   failoverIntro: '先用目前提供者的另一個帳號重試，再嘗試下方一個已啟用的提供者；第二個提供者仍失敗時就結束回合。',
   failoverAutoMiddle: '自動（中階：{model}）', failoverProviderModel: '{provider} 預設模型',
@@ -220,7 +219,6 @@ interface ProviderStatus {
     options: readonly number[]
     minimum: number
     maximum: number
-    autoCompactAt: number
   }
   failover: {
     providers: readonly FailoverProvider[]
@@ -1514,6 +1512,7 @@ function ProviderUsageBox({
   const [status, setStatus] = useState<ProviderStatus>()
   const [saving, setSaving] = useState(false)
   const [customValue, setCustomValue] = useState('')
+  const [customEditing, setCustomEditing] = useState(false)
 
   useEffect(() => {
     const update = (): void => {
@@ -1524,10 +1523,8 @@ function ProviderUsageBox({
   }, [currentProvider, session.nodes, subscribeProvider])
 
   useEffect(() => {
-    if (activeProvider === undefined) {
-      setStatus(undefined)
-      return
-    }
+    setStatus(undefined)
+    if (activeProvider === undefined) return
     const provider = providers.find(entry => entry.id === activeProvider)
     if (provider === undefined) return
     let live = true
@@ -1567,8 +1564,18 @@ function ProviderUsageBox({
   const context = activeProvider === 'codex' ? status?.contextWindow : undefined
   const customSelected = context !== undefined
     && !isPresetContextWindow(context.selected, context.options)
+  const contextSelectValue = context === undefined
+    ? ''
+    : contextControlValue(context.selected, context.options, customEditing)
   useEffect(() => {
-    if (context !== undefined && customSelected) setCustomValue(String(context.selected))
+    if (context === undefined) {
+      setCustomEditing(false)
+      return
+    }
+    if (customSelected) {
+      setCustomValue(String(context.selected))
+      setCustomEditing(true)
+    }
   }, [context?.selected, customSelected])
 
   const setContextWindow = (value: number): void => {
@@ -1584,8 +1591,14 @@ function ProviderUsageBox({
     }).finally(() => { setSaving(false) })
   }
   const commitCustom = (): void => {
+    if (context === undefined) return
     const value = Number(customValue)
-    if (Number.isInteger(value) && value !== context?.selected) setContextWindow(value)
+    if (!Number.isInteger(value)
+      || value < context.minimum
+      || value > context.maximum
+      || value === context.selected) return
+    setCustomEditing(!isPresetContextWindow(value, context.options))
+    setContextWindow(value)
   }
 
   return (
@@ -1612,20 +1625,22 @@ function ProviderUsageBox({
         : (
             <label
               style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}
-              title={t('contextAutoCompact', { tokens: formatContextWindow(context.autoCompactAt) })}
+              title={t('contextWindowTitle')}
             >
               <span>{t('contextWindow')}</span>
               <select
                 style={composerContextSelectStyle}
-                value={customSelected ? 'custom' : String(context.selected)}
+                value={contextSelectValue}
                 disabled={saving}
                 aria-label={t('contextWindowTitle')}
                 onChange={(event) => {
                   const value = event.currentTarget.value
                   if (value === 'custom') {
                     setCustomValue(String(context.selected))
+                    setCustomEditing(true)
                     return
                   }
+                  setCustomEditing(false)
                   setContextWindow(Number(value))
                 }}
               >
@@ -1634,7 +1649,7 @@ function ProviderUsageBox({
                 ))}
                 <option value="custom">{t('contextWindowCustom')}</option>
               </select>
-              {customSelected
+              {customEditing || customSelected
                 ? (
                     <input
                       style={composerContextInputStyle}

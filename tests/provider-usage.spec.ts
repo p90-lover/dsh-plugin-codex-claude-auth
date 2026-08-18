@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  contextControlValue,
   formatContextWindow,
   latestProviderFromNodes,
   providerIdFromRoute,
@@ -32,5 +33,12 @@ describe('provider usage helpers', () => {
     expect(formatContextWindow(252_000)).toBe('252K')
     expect(formatContextWindow(500_000)).toBe('500K')
     expect(formatContextWindow(1_000_000)).toBe('1M')
+  })
+
+  it('keeps the custom editor visible after Custom is selected from a preset', () => {
+    const options = [252_000, 353_000, 500_000, 1_000_000]
+    expect(contextControlValue(252_000, options, false)).toBe('252000')
+    expect(contextControlValue(252_000, options, true)).toBe('custom')
+    expect(contextControlValue(777_000, options, false)).toBe('custom')
   })
 })

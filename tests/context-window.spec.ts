@@ -30,7 +30,6 @@ describe('OpenAIContextWindowPreference', () => {
       options: [...OPENAI_CONTEXT_WINDOW_OPTIONS],
       minimum: MIN_OPENAI_CONTEXT_WINDOW,
       maximum: MAX_OPENAI_CONTEXT_WINDOW,
-      autoCompactAt: Math.floor(DEFAULT_OPENAI_CONTEXT_WINDOW * 0.9),
     })
   })
 
@@ -39,7 +38,6 @@ describe('OpenAIContextWindowPreference', () => {
     const preference = new OpenAIContextWindowPreference(fake.store)
     await preference.load()
     expect(preference.status().selected).toBe(777_000)
-    expect(preference.status().autoCompactAt).toBe(699_300)
 
     await preference.set(1_000_000)
     expect(fake.setContextWindow).toHaveBeenCalledWith('openai-codex', 1_000_000)

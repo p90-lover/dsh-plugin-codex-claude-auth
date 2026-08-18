@@ -1,7 +1,3 @@
-- id: compaction-basic
-  name: '@deepseek-ai/dsh-compaction-basic'
-  config:
-    thresholdRatio: 0.9
 - insert:
     - id: ui-oauth-model-providers
       name: 'dsh-oauth-model-providers'

@@ -41,3 +41,13 @@ export function formatContextWindow(value: number): string {
 export function isPresetContextWindow(value: number, options: readonly number[]): boolean {
   return options.includes(value)
 }
+
+export function contextControlValue(
+  selected: number,
+  options: readonly number[],
+  customEditing: boolean,
+): string {
+  return customEditing || !isPresetContextWindow(selected, options)
+    ? 'custom'
+    : String(selected)
+}

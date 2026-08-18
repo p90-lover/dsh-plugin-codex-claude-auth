@@ -4,14 +4,12 @@ export const DEFAULT_OPENAI_CONTEXT_WINDOW = 252_000
 export const MIN_OPENAI_CONTEXT_WINDOW = 252_000
 export const MAX_OPENAI_CONTEXT_WINDOW = 1_000_000
 export const OPENAI_CONTEXT_WINDOW_OPTIONS = [252_000, 353_000, 500_000, 1_000_000] as const
-export const OPENAI_AUTO_COMPACT_RATIO = 0.9
 
 export interface ContextWindowStatus {
   selected: number
   options: readonly number[]
   minimum: number
   maximum: number
-  autoCompactAt: number
 }
 
 function supported(value: number): boolean {
@@ -41,7 +39,6 @@ export class OpenAIContextWindowPreference {
       options: [...OPENAI_CONTEXT_WINDOW_OPTIONS],
       minimum: MIN_OPENAI_CONTEXT_WINDOW,
       maximum: MAX_OPENAI_CONTEXT_WINDOW,
-      autoCompactAt: Math.floor(this.selected * OPENAI_AUTO_COMPACT_RATIO),
     }
   }
 
