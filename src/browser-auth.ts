@@ -566,6 +566,11 @@ export class BrowserOAuthController {
     return this.status()
   }
 
+  async setAccountFailoverEffort(accountId: string, effortId: string | undefined): Promise<BrowserOAuthStatus> {
+    await this.store.setAccountFailoverEffort(this.authProviderId, accountId, effortId)
+    return this.status()
+  }
+
   async setProviderFailoverModel(providerId: string, modelId: string | undefined): Promise<BrowserOAuthStatus> {
     if (this.failover === undefined || this.failoverRuntime === undefined) {
       throw new HttpError(503, 'Failover settings are unavailable.')
@@ -575,6 +580,14 @@ export class BrowserOAuthController {
       throw new HttpError(400, 'Failover model is not available for this provider.')
     }
     await this.failover.setProviderModel(providerId, modelId)
+    return this.status()
+  }
+
+  async setProviderFailoverEffort(providerId: string, effortId: string | undefined): Promise<BrowserOAuthStatus> {
+    if (this.failover === undefined || this.failoverRuntime === undefined) {
+      throw new HttpError(503, 'Failover settings are unavailable.')
+    }
+    await this.failover.setProviderEffort(providerId, effortId)
     return this.status()
   }
 
@@ -718,6 +731,17 @@ export function installBrowserOAuth(
               ))
               return
             }
+            if (action === '/account/failover-effort') {
+              const effortId = body.effortId
+              if (effortId !== null && typeof effortId !== 'string') {
+                throw new HttpError(400, 'effortId must be a reasoning effort id or null.')
+              }
+              sendJson(res, 200, await controller.setAccountFailoverEffort(
+                requiredString(body, 'accountId'),
+                effortId === null ? undefined : effortId,
+              ))
+              return
+            }
             if (action === '/failover/model') {
               const modelId = body.modelId
               if (modelId !== null && typeof modelId !== 'string') {
@@ -726,6 +750,17 @@ export function installBrowserOAuth(
               sendJson(res, 200, await controller.setProviderFailoverModel(
                 requiredString(body, 'providerId'),
                 modelId === null ? undefined : modelId,
+              ))
+              return
+            }
+            if (action === '/failover/effort') {
+              const effortId = body.effortId
+              if (effortId !== null && typeof effortId !== 'string') {
+                throw new HttpError(400, 'effortId must be a reasoning effort id or null.')
+              }
+              sendJson(res, 200, await controller.setProviderFailoverEffort(
+                requiredString(body, 'providerId'),
+                effortId === null ? undefined : effortId,
               ))
               return
             }

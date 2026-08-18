@@ -1,37 +1,52 @@
 import type { HarnessOAuthCredentialStore } from './credential-store.ts'
 
 export const DEFAULT_OPENAI_CONTEXT_WINDOW = 252_000
-export const OPENAI_CONTEXT_WINDOW_OPTIONS = [252_000, 353_000] as const
+export const MIN_OPENAI_CONTEXT_WINDOW = 252_000
+export const MAX_OPENAI_CONTEXT_WINDOW = 1_000_000
+export const OPENAI_CONTEXT_WINDOW_OPTIONS = [252_000, 353_000, 500_000, 1_000_000] as const
 
 export interface ContextWindowStatus {
   selected: number
   options: readonly number[]
+  minimum: number
+  maximum: number
 }
 
-/** Durable OpenAI context-capacity metadata used by DSH pressure and compaction. */
+function supported(value: number): boolean {
+  return Number.isInteger(value)
+    && value >= MIN_OPENAI_CONTEXT_WINDOW
+    && value <= MAX_OPENAI_CONTEXT_WINDOW
+}
+
+/** Credential-backed effective OpenAI context capacity shared by catalog publication and Settings. */
 export class OpenAIContextWindowPreference {
   private selected = DEFAULT_OPENAI_CONTEXT_WINDOW
 
   constructor(private readonly store: HarnessOAuthCredentialStore) {}
 
-  value = (): number => this.selected
-
-  status(): ContextWindowStatus {
-    return { selected: this.selected, options: [...OPENAI_CONTEXT_WINDOW_OPTIONS] }
+  get value(): number {
+    return this.selected
   }
 
   async load(): Promise<void> {
     const stored = await this.store.contextWindow('openai-codex')
-    this.selected = OPENAI_CONTEXT_WINDOW_OPTIONS.includes(
-      stored as (typeof OPENAI_CONTEXT_WINDOW_OPTIONS)[number],
-    ) ? stored! : DEFAULT_OPENAI_CONTEXT_WINDOW
+    if (stored !== undefined && supported(stored)) this.selected = stored
+  }
+
+  status(): ContextWindowStatus {
+    return {
+      selected: this.selected,
+      options: [...OPENAI_CONTEXT_WINDOW_OPTIONS],
+      minimum: MIN_OPENAI_CONTEXT_WINDOW,
+      maximum: MAX_OPENAI_CONTEXT_WINDOW,
+    }
   }
 
   async set(value: number): Promise<void> {
-    if (!OPENAI_CONTEXT_WINDOW_OPTIONS.includes(
-      value as (typeof OPENAI_CONTEXT_WINDOW_OPTIONS)[number],
-    )) {
-      throw new Error('Context window must be 252000 or 353000 tokens.')
+    if (!supported(value)) {
+      throw new Error(
+        `OpenAI context window must be an integer between ${MIN_OPENAI_CONTEXT_WINDOW} and ${MAX_OPENAI_CONTEXT_WINDOW}.`,
+      )
     }
     await this.store.setContextWindow('openai-codex', value)
     this.selected = value

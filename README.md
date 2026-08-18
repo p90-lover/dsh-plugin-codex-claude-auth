@@ -23,7 +23,7 @@ DeepSeek Harness is currently a developer preview. Pin the versions above and ex
 Install the packed bundle into a Web profile:
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.7.4.tgz
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.8.0.tgz
 dsh --profile web
 ```
 
@@ -55,7 +55,9 @@ The legacy `/login-openai`, `/login-claude`, `/status-openai`, and `/status-clau
 
 ## Remote compaction and code review
 
-When DSH's existing automatic or manual compaction selects the OpenAI OAuth route, the plugin sends the full Responses input to OpenAI's remote compaction endpoint. Its canonical output is stored inside the DSH checkpoint and expanded back into the next request without pruning. If the endpoint fails, the same compaction attempt continues through DSH's existing local summary path.
+Automatic compaction timing is owned by the active DSH agent preset. With the pinned DSH 0.1.0-rc.6 packages, compaction-basic defaults to 80% of the effective routed-model context unless the preset or user configuration changes thresholdRatio. This bundle does not mount a second compaction service.
+
+When DSH starts either automatic or manual compaction on the OpenAI OAuth route, the plugin sends the full Responses input to OpenAI's provider-native remote compaction endpoint. Its canonical output is stored inside the DSH checkpoint and expanded back into the next request without pruning. The plugin does not launch the Codex CLI or type /compact. If that endpoint fails, the same compaction attempt continues through DSH's local summary path.
 
 Click **Code review** in the composer to review staged, unstaged, and untracked changes without modifying files. The equivalent commands are:
 
@@ -70,9 +72,11 @@ Click **Code review** in the composer to review staged, unstaged, and untracked 
 
 ## Usage, context window, and failover
 
-A compact box beside the normal DSH composer shows the active OpenAI usage percentage, Claude 5-hour/weekly percentages, reset details on hover, and the OpenAI context-window selector. OpenAI defaults to `252K`; `353K` can be selected and is remembered in the credential-backed provider configuration. The box uses a DSH input slot and does not replace or take ownership of the text area.
+A compact box beside the normal DSH composer follows the model selected for that session. An OpenAI session shows only OpenAI remaining quota and its context controls; a Claude session shows only Claude 5-hour and weekly remaining quota. Percentages begin at 100% after a reset and count down to 0% when exhausted. Reset details remain available on hover.
 
-Open **Settings → Failover** to see every provider DSH currently registers or declares as configurable. Choose which available providers may be used, set their order, and select a provider-level fallback model. With no explicit model, the plugin chooses a semantic middle tier when one is identifiable (for example Sonnet, Terra, Balanced, Standard, or Chat), otherwise the middle catalog entry. Each OAuth account can override that provider default or inherit it.
+OpenAI defaults to `252K` and offers `353K`, `500K`, `1M`, and a custom integer from 252,000 through 1,000,000 tokens. The selection is credential-backed. After a save, the client reloads the active session's model directory so the next prompt uses newly published context metadata without requiring a browser or DSH restart. The box uses a DSH input slot and does not replace or take ownership of the text area.
+
+Open **Settings → Failover** to see every provider DSH currently registers or declares as configurable. Choose which available providers may be used, set their order, and select both a provider-level fallback model and one of that exact model's advertised reasoning-effort levels. With no explicit model, the plugin chooses a semantic middle tier when one is identifiable (for example Sonnet, Terra, Balanced, Standard, or Chat), otherwise the middle catalog entry. With no explicit effort, it uses the destination model's own default. Each OAuth account can override the provider model and effort independently or inherit them.
 
 Automatic failover is deliberately bounded:
 
@@ -143,7 +147,7 @@ pnpm test
 pnpm run build
 ```
 
-The focused tests cover remote compaction request/restore behavior, automatic and manual read-only review contracts, Codex tool definition/call/result identity, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, reusable proxy migration/default/assignment precedence, proxy URL redaction, proxy stream options, context-window persistence, and bounded account-first/provider-second failover.
+The focused tests cover remote compaction request/restore behavior, automatic and manual read-only review contracts, Codex tool definition/call/result identity, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, reusable proxy migration/default/assignment precedence, proxy URL redaction, proxy stream options, custom 252K–1M context-window persistence and live directory refresh, active-provider-only remaining-quota helpers, configurable failover effort, and bounded account-first/provider-second failover.
 
 ## License
 

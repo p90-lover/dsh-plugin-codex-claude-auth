@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run typecheck, tests, and production build
+        run: pnpm run check
+
+      - name: Check repository diff
+        run: git diff --check
+
+      - name: Pack plugin
+        run: |
+          mkdir -p artifacts
+          pnpm pack --pack-destination artifacts
+          sha256sum artifacts/*.tgz | tee artifacts/SHA256SUMS
+
+      - name: Upload packed plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-oauth-model-providers
+          path: artifacts/
+          if-no-files-found: error

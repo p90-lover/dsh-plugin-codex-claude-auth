@@ -98,7 +98,7 @@ export function applyOAuthProvider(
       baseProvider,
       spec.modelCatalog,
       undefined,
-      contextWindow?.value,
+      () => contextWindow?.value,
     )),
     () => proxy.value,
   )
@@ -156,6 +156,24 @@ export function applyOAuthProvider(
       const ids = models.map(model => model.id)
       const providerDefault = await failover.preferences.modelFor(config.route, ids)
       return store.resolveActiveFailoverModel(spec.authProviderId, ids, providerDefault)
+    },
+    selectEffort: async (model) => {
+      const efforts = model.reasoning?.efforts.map(effort => String(effort.id)) ?? []
+      const modelDefault = model.reasoning?.defaultEffort === undefined
+        ? undefined
+        : String(model.reasoning.defaultEffort)
+      const providerDefault = await failover.preferences.effortFor(
+        config.route,
+        efforts,
+        model.reasoning?.defaultEffort,
+      )
+      const selected = await store.resolveActiveFailoverEffort(
+        spec.authProviderId,
+        efforts,
+        providerDefault === undefined ? undefined : String(providerDefault),
+        modelDefault,
+      )
+      return selected as typeof providerDefault
     },
   })
   const adapter = failover.adapter
@@ -300,7 +318,7 @@ export function applyOAuthProvider(
     setAvailable,
     contextWindow,
     async () => {
-      await authModels.refresh({ allowNetwork: false, force: false })
+      await authModels.refresh({ allowNetwork: false, force: true })
       if (routeAvailable) registration.replace([config.route])
     },
     failover.preferences,
