@@ -1,11 +1,14 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -16,11 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Check out repository head
+      - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.ref }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -36,40 +36,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Apply final review fixes
-        if: ${{ hashFiles('scripts/final-review-fixes.mjs') != '' }}
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/final-review-fixes.mjs')
-          source = path.read_text(encoding='utf-8')
-          source = source.replace(r'\\`compaction-basic\\`', 'compaction-basic')
-          source = source.replace(r'\\`thresholdRatio\\`', 'thresholdRatio')
-          path.write_text(source, encoding='utf-8')
-          PY
-          node scripts/final-review-fixes.mjs
-          rm scripts/final-review-fixes.mjs
-
       - name: Run typecheck, tests, and production build
         run: pnpm run check
 
       - name: Check repository diff
         run: git diff --check
-
-      - name: Commit verified final review fixes
-        if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
-        shell: bash
-        run: |
-          if git diff --quiet && [ -z "$(git status --porcelain)" ]; then
-            echo "No generated changes to commit."
-            exit 0
-          fi
-          target_branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: make custom context editable and preserve DSH compaction ownership"
-          git push origin "HEAD:${target_branch}"
 
       - name: Pack plugin
         run: |
