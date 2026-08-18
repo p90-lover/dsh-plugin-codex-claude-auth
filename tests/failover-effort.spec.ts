@@ -1,116 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-
-function read(path) {
-  return readFileSync(path, 'utf8')
-}
-
-function write(path, content) {
-  mkdirSync(path.slice(0, path.lastIndexOf('/')), { recursive: true })
-  writeFileSync(path, content.endsWith('\n') ? content : `${content}\n`, 'utf8')
-}
-
-function replaceOnce(path, before, after) {
-  const source = read(path)
-  const count = source.split(before).length - 1
-  if (count !== 1) throw new Error(`${path}: expected one replacement, found ${count}`)
-  writeFileSync(path, source.replace(before, after), 'utf8')
-}
-
-write('tests/context-window.spec.ts', `import { describe, expect, it, vi } from 'vitest'
-import type { HarnessOAuthCredentialStore } from '../src/credential-store.ts'
-import {
-  DEFAULT_OPENAI_CONTEXT_WINDOW,
-  MAX_OPENAI_CONTEXT_WINDOW,
-  MIN_OPENAI_CONTEXT_WINDOW,
-  OPENAI_CONTEXT_WINDOW_OPTIONS,
-  OpenAIContextWindowPreference,
-} from '../src/context-window.ts'
-
-function fakeStore(stored?: number): {
-  store: HarnessOAuthCredentialStore
-  setContextWindow: ReturnType<typeof vi.fn>
-} {
-  const setContextWindow = vi.fn(async () => undefined)
-  return {
-    store: {
-      contextWindow: vi.fn(async () => stored),
-      setContextWindow,
-    } as unknown as HarnessOAuthCredentialStore,
-    setContextWindow,
-  }
-}
-
-describe('OpenAIContextWindowPreference', () => {
-  it('offers 252K, 353K, 500K and 1M with a custom range', () => {
-    const preference = new OpenAIContextWindowPreference(fakeStore().store)
-    expect(preference.status()).toEqual({
-      selected: DEFAULT_OPENAI_CONTEXT_WINDOW,
-      options: [...OPENAI_CONTEXT_WINDOW_OPTIONS],
-      minimum: MIN_OPENAI_CONTEXT_WINDOW,
-      maximum: MAX_OPENAI_CONTEXT_WINDOW,
-      autoCompactAt: Math.floor(DEFAULT_OPENAI_CONTEXT_WINDOW * 0.9),
-    })
-  })
-
-  it('loads and persists a custom value inside the supported range', async () => {
-    const fake = fakeStore(777_000)
-    const preference = new OpenAIContextWindowPreference(fake.store)
-    await preference.load()
-    expect(preference.status().selected).toBe(777_000)
-    expect(preference.status().autoCompactAt).toBe(699_300)
-
-    await preference.set(1_000_000)
-    expect(fake.setContextWindow).toHaveBeenCalledWith('openai-codex', 1_000_000)
-    expect(preference.status().selected).toBe(1_000_000)
-  })
-
-  it('rejects custom values outside 252K through 1M', async () => {
-    const preference = new OpenAIContextWindowPreference(fakeStore().store)
-    await expect(preference.set(251_999)).rejects.toThrow(/252000/u)
-    await expect(preference.set(1_000_001)).rejects.toThrow(/1000000/u)
-  })
-})
-`)
-
-write('tests/provider-usage.spec.ts', `import { describe, expect, it } from 'vitest'
-import {
-  formatContextWindow,
-  latestProviderFromNodes,
-  providerIdFromRoute,
-  remainingPercent,
-} from '../src/client/provider-usage.ts'
-
-describe('provider usage helpers', () => {
-  it('maps only the active OAuth route to its composer provider', () => {
-    expect(providerIdFromRoute('openai-codex-oauth')).toBe('codex')
-    expect(providerIdFromRoute('anthropic-oauth')).toBe('claude')
-    expect(providerIdFromRoute('other-provider')).toBeUndefined()
-  })
-
-  it('uses the latest assistant provenance when the model directory has not loaded yet', () => {
-    expect(latestProviderFromNodes([
-      { kind: 'assistant', provenance: { provider: 'openai-codex-oauth' } },
-      { kind: 'user' },
-      { kind: 'assistant', provenance: { provider: 'anthropic-oauth' } },
-    ])).toBe('claude')
-  })
-
-  it('shows remaining capacity from 100 percent down to zero', () => {
-    expect(remainingPercent(undefined, 0)).toBe(100)
-    expect(remainingPercent(73.6, 26.4)).toBe(74)
-    expect(remainingPercent(undefined, 100)).toBe(0)
-    expect(remainingPercent(140, undefined)).toBe(100)
-  })
-
-  it('formats extended context presets without showing 1000K', () => {
-    expect(formatContextWindow(252_000)).toBe('252K')
-    expect(formatContextWindow(500_000)).toBe('500K')
-    expect(formatContextWindow(1_000_000)).toBe('1M')
-  })
-})
-`)
-
-write('tests/failover-effort.spec.ts', `import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions,
@@ -132,7 +20,7 @@ class MemoryBackend implements HarnessCredentialBackend {
     return value === undefined ? undefined : { value, source: 'memory' }
   }
   async describe(ref: string) {
-    return { configured: this.values.has(ref), source: 'memory' }
+    return { configured: this.values.has(ref), writable: true, source: 'memory' }
   }
   async set(ref: string, value: string) { this.values.set(ref, value) }
   async unset(ref: string) { this.values.delete(ref) }
@@ -237,10 +125,3 @@ describe('failover reasoning effort', () => {
     expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
   })
 })
-`)
-
-replaceOnce(
-  'package.json',
-  'tests/proxy.spec.ts tests/failover.spec.ts',
-  'tests/proxy.spec.ts tests/failover.spec.ts tests/context-window.spec.ts tests/provider-usage.spec.ts tests/failover-effort.spec.ts',
-)

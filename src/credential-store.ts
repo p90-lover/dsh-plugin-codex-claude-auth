@@ -58,6 +58,7 @@ interface StoredAccount {
   proxyId?: string
   useResetCredit?: boolean
   failoverModel?: string
+  failoverEffort?: string
 }
 
 interface StoredAccountBundle {
@@ -75,6 +76,7 @@ export interface PublicOAuthAccount {
   proxyId?: string
   useResetCredit: boolean
   failoverModel?: string
+  failoverEffort?: string
 }
 
 function tokenClaims(token: string): Record<string, unknown> | undefined {
@@ -122,6 +124,9 @@ function parseStoredValue(value: string, providerId: string, ref: CredentialRef)
           useResetCredit: item.useResetCredit === true,
           ...typeof item.failoverModel === 'string' && item.failoverModel.length > 0
             ? { failoverModel: item.failoverModel }
+            : {},
+          ...typeof item.failoverEffort === 'string' && item.failoverEffort.length > 0
+            ? { failoverEffort: item.failoverEffort }
             : {},
         }
       })
@@ -228,6 +233,9 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
           ...matching >= 0 && bundle.accounts[matching]!.failoverModel !== undefined
             ? { failoverModel: bundle.accounts[matching]!.failoverModel }
             : {},
+          ...matching >= 0 && bundle.accounts[matching]!.failoverEffort !== undefined
+            ? { failoverEffort: bundle.accounts[matching]!.failoverEffort }
+            : {},
         }
         const accounts = matching < 0
           ? [...bundle.accounts, account]
@@ -266,6 +274,7 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
       ...account.proxyId === undefined ? {} : { proxyId: account.proxyId },
       useResetCredit: account.useResetCredit === true,
       ...account.failoverModel === undefined ? {} : { failoverModel: account.failoverModel },
+      ...account.failoverEffort === undefined ? {} : { failoverEffort: account.failoverEffort },
     }))
   }
 
@@ -353,6 +362,27 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
     })
   }
 
+  setAccountFailoverEffort(providerId: string, accountId: string, effortId: string | undefined): Promise<void> {
+    const ref = this.ref(providerId)
+    return this.enqueue(providerId, async () => {
+      const resolved = await this.backend.resolve(ref)
+      if (resolved === undefined) throw new Error('No OAuth accounts are saved.')
+      const bundle = parseStoredValue(resolved.value, providerId, ref)
+      if (!bundle.accounts.some(account => account.id === accountId)) throw new Error('OAuth account not found.')
+      await this.backend.set(ref, JSON.stringify({
+        ...bundle,
+        accounts: bundle.accounts.map((account) => {
+          if (account.id !== accountId) return account
+          if (effortId === undefined) {
+            const { failoverEffort: _removed, ...rest } = account
+            return rest
+          }
+          return { ...account, failoverEffort: effortId }
+        }),
+      }))
+    })
+  }
+
   async failoverDefaultModel(providerId: string): Promise<string | undefined> {
     const ref = this.refs.get(providerId)
     if (ref === undefined) return undefined
@@ -377,6 +407,24 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
     return selected !== undefined && availableModels.includes(selected)
       ? selected
       : availableModels[Math.floor(availableModels.length / 2)]
+  }
+
+  async resolveActiveFailoverEffort(
+    providerId: string,
+    availableEfforts: readonly string[],
+    providerDefault?: string,
+    modelDefault?: string,
+  ): Promise<string | undefined> {
+    const ref = this.refs.get(providerId)
+    if (ref === undefined) return providerDefault ?? modelDefault
+    const resolved = await this.backend.resolve(ref)
+    if (resolved === undefined) return providerDefault ?? modelDefault
+    const bundle = parseStoredValue(resolved.value, providerId, ref)
+    const active = bundle.accounts.find(account => account.id === bundle.activeAccountId)
+    const selected = active?.failoverEffort ?? providerDefault ?? modelDefault
+    return selected !== undefined && (availableEfforts.length === 0 || availableEfforts.includes(selected))
+      ? selected
+      : modelDefault
   }
 
   async contextWindow(providerId: string): Promise<number | undefined> {
@@ -417,6 +465,7 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
         ...account.proxyId === undefined ? {} : { proxyId: account.proxyId },
         useResetCredit: account.useResetCredit === true,
         ...account.failoverModel === undefined ? {} : { failoverModel: account.failoverModel },
+        ...account.failoverEffort === undefined ? {} : { failoverEffort: account.failoverEffort },
       },
       credential: { ...account.credential },
     }))

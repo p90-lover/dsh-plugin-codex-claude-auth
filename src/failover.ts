@@ -19,6 +19,7 @@ interface StoredFailoverPreferences {
   providerOrder: string[]
   enabledProviders: string[]
   providerModels: Record<string, string>
+  providerEfforts: Record<string, string>
 }
 
 export interface FailoverProviderCatalog {
@@ -26,9 +27,15 @@ export interface FailoverProviderCatalog {
   name: string
   available: boolean
   enabled: boolean
-  models: readonly { id: string; name: string }[]
+  models: readonly {
+    id: string
+    name: string
+    efforts: readonly { id: string; name: string; description?: string }[]
+    defaultEffort?: string
+  }[]
   defaultModel?: string
   model?: string
+  effort?: string
 }
 
 export interface PublicFailoverPreferences {
@@ -39,11 +46,18 @@ export interface FailoverRuntime {
   listProviders(): LlmProviderInfo[]
   listConfigurableProviders?(): readonly { provider: string; displayName: string }[]
   listModels(provider: string): Promise<LlmModelInfo[]>
+  resolveModel?(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>
 }
 
 function emptyPreferences(): StoredFailoverPreferences {
-  return { version: 1, providerOrder: [], enabledProviders: [], providerModels: {} }
+  return {
+    version: 1,
+    providerOrder: [],
+    enabledProviders: [],
+    providerModels: {},
+    providerEfforts: {},
+  }
 }
 
 function parsePreferences(value: string | undefined): StoredFailoverPreferences {
@@ -60,11 +74,17 @@ function parsePreferences(value: string | undefined): StoredFailoverPreferences 
     const models = typeof parsed.providerModels === 'object' && parsed.providerModels !== null
       ? parsed.providerModels as Record<string, unknown>
       : {}
+    const efforts = typeof parsed.providerEfforts === 'object' && parsed.providerEfforts !== null
+      ? parsed.providerEfforts as Record<string, unknown>
+      : {}
     return {
       version: 1,
       providerOrder: [...new Set(providerOrder)],
       enabledProviders: [...new Set(enabledProviders)],
       providerModels: Object.fromEntries(Object.entries(models).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0,
+      )),
+      providerEfforts: Object.fromEntries(Object.entries(efforts).filter(
         (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0,
       )),
     }
@@ -123,6 +143,19 @@ export class FailoverPreferences {
       : automaticMiddleModel(availableModels.map(id => ({ id })))
   }
 
+  async effortFor(
+    provider: string,
+    availableEfforts: readonly string[],
+    modelDefault?: GenerateOptions['reasoningEffort'],
+  ): Promise<GenerateOptions['reasoningEffort'] | undefined> {
+    const stored = await this.readStored()
+    const configured = stored.providerEfforts[provider]
+    if (configured !== undefined && availableEfforts.includes(configured)) {
+      return configured as GenerateOptions['reasoningEffort']
+    }
+    return modelDefault
+  }
+
   setProviderEnabled(provider: string, enabled: boolean, detectedProviders: readonly string[]): Promise<void> {
     return this.update((current) => {
       const defaultEnabled = current.providerOrder.length === 0 && current.enabledProviders.length === 0
@@ -160,6 +193,15 @@ export class FailoverPreferences {
     })
   }
 
+  setProviderEffort(provider: string, effort: string | undefined): Promise<void> {
+    return this.update((current) => {
+      const providerEfforts = { ...current.providerEfforts }
+      if (effort === undefined) delete providerEfforts[provider]
+      else providerEfforts[provider] = effort
+      return { ...current, providerEfforts }
+    })
+  }
+
   async describe(runtime: FailoverRuntime, availableRoutes: ReadonlySet<string>): Promise<PublicFailoverPreferences> {
     const active = runtime.listProviders()
     const providers = [
@@ -181,14 +223,33 @@ export class FailoverPreferences {
     const entries = await Promise.all(order.map(async (id): Promise<FailoverProviderCatalog> => {
       const models = await runtime.listModels(id).catch(() => [])
       const defaultModel = automaticMiddleModel(models)
+      const modelEntries = await Promise.all(models.map(async (model) => {
+        let resolved: LlmResolvedModelInfo | undefined
+        if (runtime.resolveModel !== undefined) {
+          resolved = await runtime.resolveModel(id, model.id).catch(() => undefined)
+        }
+        return {
+          id: model.id,
+          name: model.name,
+          efforts: resolved?.reasoning?.efforts.map(effort => ({
+            id: String(effort.id),
+            name: effort.name,
+            ...effort.description === undefined ? {} : { description: effort.description },
+          })) ?? [],
+          ...resolved?.reasoning?.defaultEffort === undefined
+            ? {}
+            : { defaultEffort: String(resolved.reasoning.defaultEffort) },
+        }
+      }))
       return {
         id,
         name: byId.get(id)?.name ?? id,
         available: availableRoutes.has(id) && models.length > 0,
         enabled: enabled.has(id),
-        models: models.map(model => ({ id: model.id, name: model.name })),
+        models: modelEntries,
         ...defaultModel === undefined ? {} : { defaultModel },
         ...stored.providerModels[id] === undefined ? {} : { model: stored.providerModels[id] },
+        ...stored.providerEfforts[id] === undefined ? {} : { effort: stored.providerEfforts[id] },
       }
     }))
     return { providers: entries }
@@ -207,6 +268,9 @@ interface OAuthRouteState {
   available: boolean
   rotate: () => Promise<AccountSwitchResult | undefined>
   selectModel: (models: readonly LlmModelInfo[]) => Promise<string | undefined>
+  selectEffort?: (
+    model: LlmResolvedModelInfo,
+  ) => Promise<GenerateOptions['reasoningEffort'] | undefined>
 }
 
 interface StickyRoute {
@@ -351,12 +415,24 @@ export class AutoFailoverAdapter extends LlmAdapter {
   private async retargetRequest(options: GenerateOptions, provider: string, model: string): Promise<GenerateOptions> {
     const request = retarget(options, provider, model)
     const own = this.routes.get(provider)
-    if (own === undefined) return request
-    const info = await own.delegate.resolveModel(provider, model, options.signal)
+    const info = own === undefined
+      ? await this.runtime.resolveModel?.(provider, model, options.signal)
+      : await own.delegate.resolveModel(provider, model, options.signal)
+    if (info === undefined) return request
+    const effortIds = info.reasoning?.efforts.map(effort => String(effort.id)) ?? []
+    const selectedEffort = own === undefined
+      ? await this.preferences.effortFor(provider, effortIds, info.reasoning?.defaultEffort)
+      : own.selectEffort === undefined
+        ? await this.preferences.effortFor(provider, effortIds, info.reasoning?.defaultEffort)
+        : await own.selectEffort(info)
+    const reasoningEffort = selectedEffort !== undefined
+      && (effortIds.length === 0 || effortIds.includes(String(selectedEffort)))
+      ? selectedEffort
+      : info.reasoning?.defaultEffort
     return {
       ...request,
       ...info.defaultMaxTokens === undefined ? {} : { maxTokens: info.defaultMaxTokens },
-      ...info.reasoning?.defaultEffort === undefined ? {} : { reasoningEffort: info.reasoning.defaultEffort },
+      ...reasoningEffort === undefined ? {} : { reasoningEffort },
     }
   }
 
