@@ -31,12 +31,14 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - name: Install baseline dependencies
+      - name: Install reproducible baseline dependencies
+        if: matrix.dsh == '0.1.2-rc.1'
         run: pnpm install --frozen-lockfile
-      - name: Select independently tested newer Harness
+      - name: Install independently resolved newer Harness
         if: matrix.dsh != '0.1.2-rc.1'
         run: |
           node scripts/use-harness.mjs '${{ matrix.dsh }}'
+          rm pnpm-lock.yaml
           pnpm install --no-frozen-lockfile
       - name: Typecheck, all regression tests, clean production build
         run: pnpm run check
