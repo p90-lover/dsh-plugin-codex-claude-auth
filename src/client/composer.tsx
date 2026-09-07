@@ -40,7 +40,7 @@ function ActiveStatus({ service, provider, model, directory }: { service: Provid
   const week = active?.usage.windows?.find(w => w.id === 'weekly')
   const quota = provider === 'codex' ? amount(active?.usage.remainingPercent, active?.usage.usedPercent)
     : `5h ${amount(five?.remainingPercent)} · 7d ${amount(week?.remainingPercent)}`
-  const context = provider === 'codex' ? state.data?.contextWindow : undefined
+  const context = provider === 'codex' && state.data?.connected ? state.data.contextWindow : undefined
   const nativeCapacity = context?.modelLimits?.[model]
   const effective = context === undefined || nativeCapacity === undefined ? undefined : Math.min(context.selected, nativeCapacity)
   return <div ref={root} className="dsh-oauth o-composer" data-active-provider={provider} onKeyDown={event => { if (event.key === 'Escape' && open) { setOpen(false); trigger.current?.focus() } }}>
