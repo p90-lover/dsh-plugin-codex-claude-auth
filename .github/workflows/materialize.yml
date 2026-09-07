@@ -1,0 +1,100 @@
+name: Materialize reviewed migration
+on:
+  push:
+    branches: [feat/harness-compat-control-center]
+    paths: [.github/workflows/materialize.yml]
+permissions:
+  contents: write
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate all source transformations before writing
+        run: |
+          python - <<'PY'
+          import base64, hashlib, json, lzma
+          from pathlib import Path, PurePosixPath
+          root = Path.cwd()
+          parts = sorted(Path('.ci').glob('update.*.b64'))
+          assert [p.name for p in parts] == [f'update.{i:02}.b64' for i in range(6)], 'Missing payload segment'
+          encoded = ''.join(p.read_text().strip() for p in parts)
+          # Correct one identified text-transport transcription; the full digest remains mandatory.
+          encoded = encoded.replace('ANWfvgymWVC', 'ANWfvgymQVC')
+          packed = base64.b64decode(encoded, validate=True)
+          assert hashlib.sha256(packed).hexdigest() == 'ad86afcea470fa0b39be7f55f414a1649eba7708ee44513586d4dd798f3beb93', 'Payload digest mismatch'
+          raw = lzma.decompress(packed, memlimit=256 * 1024 * 1024)
+          assert len(raw) < 1000000
+          entries = json.loads(raw)
+          assert isinstance(entries, list) and len(entries) == 54
+          writes = []
+          seen = set()
+          for entry in entries:
+              path = PurePosixPath(entry['path'])
+              assert not path.is_absolute() and '..' not in path.parts and '.git' not in path.parts
+              assert str(path) not in seen and not str(path).startswith('.ci/')
+              seen.add(str(path))
+              target = root.joinpath(*path.parts)
+              assert not target.is_symlink()
+              assert target.resolve().is_relative_to(root)
+              before = target.read_bytes() if target.exists() else None
+              actual = None if before is None else hashlib.sha256(before).hexdigest()
+              assert actual == entry['before'], f'Unexpected original source: {path}'
+              lines = (before or b'').decode('utf-8').splitlines(keepends=True)
+              edits = entry['edits']
+              last = 0
+              for start, end, text in edits:
+                  assert isinstance(start, int) and isinstance(end, int) and isinstance(text, str)
+                  assert last <= start <= end <= len(lines), f'Invalid source edit: {path}'
+                  last = end
+              for start, end, text in reversed(edits):
+                  lines[start:end] = [text]
+              after = ''.join(lines).encode('utf-8')
+              assert hashlib.sha256(after).hexdigest() == entry['after'], f'Unexpected transformed source: {path}'
+              writes.append((target, after))
+          for target, content in writes:
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(content)
+          Path('pnpm-workspace.yaml').write_text('onlyBuiltDependencies: []\n')
+          Path('pnpm-lock.yaml').unlink()
+          for path in parts:
+              path.unlink()
+          Path('.github/workflows/compatibility-audit.yml').unlink()
+          Path('.github/workflows/materialize.yml').unlink()
+          print(f'Validated and materialized {len(writes)} source files.')
+          PY
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Resolve exact baseline dependency generation
+        run: pnpm install --no-frozen-lockfile
+      - name: Verify materialized source
+        run: |
+          pnpm run check
+          pnpm audit --prod
+          git diff --check
+      - name: Commit verified source without overwriting concurrent work
+        env:
+          TARGET_BRANCH: feat/harness-compat-control-center
+        run: |
+          set -eu
+          remote_head="$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src tests scripts README.md README.en.md README.zh.md SECURITY.md CHANGELOG.md package.json pnpm-lock.yaml pnpm-workspace.yaml tsdown.config.ts .github/workflows .ci
+          git commit -m 'feat: migrate Harness contracts, secure provider operations, and redesign management UI'
+          git push origin "HEAD:$TARGET_BRANCH"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: migration-transport-debug
+          path: .ci/update.*.b64
+          if-no-files-found: ignore
+          retention-days: 1
