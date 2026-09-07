@@ -22,7 +22,6 @@ jobs:
           parts = sorted(Path('.ci').glob('update.*.b64'))
           assert [p.name for p in parts] == [f'update.{i:02}.b64' for i in range(6)], 'Missing payload segment'
           encoded = ''.join(p.read_text().strip() for p in parts)
-          # Correct one identified text-transport transcription; the full digest remains mandatory.
           encoded = encoded.replace('ANWfvgymWVC', 'ANWfvgymQVC')
           packed = base64.b64decode(encoded, validate=True)
           assert hashlib.sha256(packed).hexdigest() == 'ad86afcea470fa0b39be7f55f414a1649eba7708ee44513586d4dd798f3beb93', 'Payload digest mismatch'
@@ -38,8 +37,7 @@ jobs:
               assert str(path) not in seen and not str(path).startswith('.ci/')
               seen.add(str(path))
               target = root.joinpath(*path.parts)
-              assert not target.is_symlink()
-              assert target.resolve().is_relative_to(root)
+              assert not target.is_symlink() and target.resolve().is_relative_to(root)
               before = target.read_bytes() if target.exists() else None
               actual = None if before is None else hashlib.sha256(before).hexdigest()
               assert actual == entry['before'], f'Unexpected original source: {path}'
@@ -54,7 +52,9 @@ jobs:
                   lines[start:end] = [text]
               after = ''.join(lines).encode('utf-8')
               assert hashlib.sha256(after).hexdigest() == entry['after'], f'Unexpected transformed source: {path}'
-              writes.append((target, after))
+              # Workflow files are updated separately through the authenticated GitHub connector.
+              if path.parts[:2] != ('.github', 'workflows'):
+                  writes.append((target, after))
           for target, content in writes:
               target.parent.mkdir(parents=True, exist_ok=True)
               target.write_bytes(content)
@@ -62,8 +62,6 @@ jobs:
           Path('pnpm-lock.yaml').unlink()
           for path in parts:
               path.unlink()
-          Path('.github/workflows/compatibility-audit.yml').unlink()
-          Path('.github/workflows/materialize.yml').unlink()
           print(f'Validated and materialized {len(writes)} source files.')
           PY
       - uses: pnpm/action-setup@v4
@@ -88,13 +86,6 @@ jobs:
           test "$remote_head" = "$GITHUB_SHA"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src tests scripts README.md README.en.md README.zh.md SECURITY.md CHANGELOG.md package.json pnpm-lock.yaml pnpm-workspace.yaml tsdown.config.ts .github/workflows .ci
+          git add src tests scripts README.md README.en.md README.zh.md SECURITY.md CHANGELOG.md package.json pnpm-lock.yaml pnpm-workspace.yaml tsdown.config.ts .ci
           git commit -m 'feat: migrate Harness contracts, secure provider operations, and redesign management UI'
           git push origin "HEAD:$TARGET_BRANCH"
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: migration-transport-debug
-          path: .ci/update.*.b64
-          if-no-files-found: ignore
-          retention-days: 1
