@@ -1,1 +1,5 @@
-onlyBuiltDependencies: []
+# The alpha Harness requires this native flock binding at startup.
+# Its install script only runs node-gyp configure/build from the locked source.
+# Other dependency install scripts remain disabled.
+onlyBuiltDependencies:
+  - fs-ext
