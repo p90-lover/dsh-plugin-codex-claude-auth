@@ -4,7 +4,8 @@ import type {
   Model,
   ModelsStoreEntry,
   Provider,
-  ProviderModelsStore,
+  ModelsPublication,
+  RefreshModelsContext,
 } from '@earendil-works/pi-ai'
 import { describe, expect, it, vi } from 'vitest'
 import { autoModelProvider } from '../src/model-discovery.ts'
@@ -21,7 +22,7 @@ function staticModel(provider: string, api: Api): Model<Api> {
     reasoning: true,
     input: ['text', 'image'],
     cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200_000,
+    contextWindow: 400_000,
     maxTokens: 32_000,
   }
 }
@@ -47,13 +48,21 @@ function baseProvider(provider: string, api: Api): Provider {
   }
 }
 
-function memoryStore(): ProviderModelsStore & { readonly entry: ModelsStoreEntry | undefined } {
+function memoryStore() {
   let entry: ModelsStoreEntry | undefined
   return {
     get entry() { return entry },
-    read() { return Promise.resolve(entry) },
-    write(value) { entry = value; return Promise.resolve() },
-    delete() { entry = undefined; return Promise.resolve() },
+    context(): Pick<RefreshModelsContext, 'stored' | 'publish' | 'signal'> {
+      return {
+        ...(entry === undefined ? {} : { stored: entry }),
+        signal: new AbortController().signal,
+        publish: async (publication: ModelsPublication) => {
+          if (publication.persist !== undefined) entry = publication.persist ?? undefined
+          publication.update?.()
+          return true
+        },
+      }
+    },
   }
 }
 
@@ -85,7 +94,7 @@ describe('OAuth model discovery', () => {
         expires: Date.now() + 60_000,
         accountId: 'account-1',
       },
-      store,
+      ...store.context(),
       allowNetwork: true,
     })
 
@@ -135,7 +144,7 @@ describe('OAuth model discovery', () => {
         refresh: 'secret-refresh-token',
         expires: Date.now() + 60_000,
       },
-      store: memoryStore(),
+      ...memoryStore().context(),
       allowNetwork: true,
     })
 
@@ -163,7 +172,7 @@ describe('OAuth model discovery', () => {
         expires: Date.now() + 60_000,
         accountId: 'account-1',
       },
-      store: memoryStore(),
+      ...memoryStore().context(),
       allowNetwork: true,
     })).rejects.toThrow(/HTTP 503/u)
     expect(provider.getModels().map(model => model.id)).toEqual(['gpt-5.6-sol'])
@@ -181,4 +190,22 @@ describe('OAuth model discovery', () => {
     selected = 353_000
     expect(provider.getModels()[0]?.contextWindow).toBe(353_000)
   })
+  it('never advertises a context capacity larger than the provider actually supports', () => {
+    const provider = autoModelProvider(baseProvider('openai-codex', 'openai-codex-responses'),
+      'openai-codex', undefined, () => 1_000_000)
+    expect(provider.getModels()[0]?.contextWindow).toBe(400_000)
+  })
+
+  it('does not publish a catalog from a superseded account or refresh generation', async () => {
+    const provider = autoModelProvider(baseProvider('openai-codex', 'openai-codex-responses'),
+      'openai-codex', async () => new Response(JSON.stringify({ models: [{ slug: 'stale-model' }] })))
+    await provider.refreshModels!({
+      credential: { type: 'oauth', access: 'test', refresh: 'test', expires: Date.now() + 60000, accountId: 'test-account' },
+      signal: new AbortController().signal,
+      allowNetwork: true,
+      publish: async () => false,
+    })
+    expect(provider.getModels()[0]?.id).not.toBe('stale-model')
+  })
+
 })

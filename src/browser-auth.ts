@@ -1,3 +1,4 @@
+import { publicError } from './public-error.ts'
 import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type {
@@ -8,6 +9,7 @@ import type {
 } from '@earendil-works/pi-ai'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-client-connection'
 import type { HarnessOAuthCredentialStore } from './credential-store.ts'
 import type { PublicAccountWithUsage } from './account-usage.ts'
 import type { AccountUsageMonitor } from './account-usage.ts'
@@ -18,48 +20,8 @@ import type { FailoverPreferences, FailoverRuntime, PublicFailoverPreferences } 
 const BODY_LIMIT_BYTES = 16 * 1024
 const API_ROOT = '/plugins/dsh-oauth-model-providers/oauth'
 
-export type BrowserOAuthPhase =
-  | 'starting'
-  | 'input'
-  | 'authorizing'
-  | 'device_code'
-  | 'complete'
-  | 'error'
-  | 'cancelled'
-
-export interface BrowserOAuthPrompt {
-  id: string
-  type: AuthPrompt['type']
-  message: string
-  placeholder?: string
-  options?: readonly { id: string; label: string; description?: string }[]
-}
-
-export interface BrowserOAuthState {
-  id: string
-  providerName: string
-  phase: BrowserOAuthPhase
-  revision: number
-  connected: boolean
-  prompt?: BrowserOAuthPrompt
-  authUrl?: string
-  authInstructions?: string
-  deviceCode?: {
-    userCode: string
-    verificationUri: string
-    expiresInSeconds?: number
-  }
-  progress?: string
-  error?: string
-}
-
-export interface BrowserOAuthStatus {
-  connected: boolean
-  accounts: readonly PublicAccountWithUsage[]
-  proxy: PublicProxySetting
-  contextWindow?: ContextWindowStatus
-  failover: PublicFailoverPreferences
-}
+export type { OAuthPhase as BrowserOAuthPhase, PublicPrompt as BrowserOAuthPrompt, PublicFlow as BrowserOAuthState, PublicProviderStatus as BrowserOAuthStatus } from './shared/contracts.ts'
+import type { OAuthPhase as BrowserOAuthPhase, PublicPrompt as BrowserOAuthPrompt, PublicFlow as BrowserOAuthState, PublicProviderStatus as BrowserOAuthStatus } from './shared/contracts.ts'
 
 interface BrowserOAuthChange {
   phase?: BrowserOAuthPhase
@@ -84,13 +46,6 @@ function terminal(phase: BrowserOAuthPhase): boolean {
   return phase === 'complete' || phase === 'error' || phase === 'cancelled'
 }
 
-function publicError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  return raw
-    .replace(/([?&#](?:code|state|access_token|refresh_token)=)[^&#\s]+/giu, '$1[redacted]')
-    .replace(/(https?:\/\/)[^/\s@]+@/giu, '$1[redacted]@')
-    .replace(/\b(?:ac_|sk-)[A-Za-z0-9._-]{8,}\b/gu, '[redacted]')
-}
 
 function cloneState(state: BrowserOAuthState): BrowserOAuthState {
   return {
@@ -392,6 +347,8 @@ export class BrowserOAuthController {
     private readonly failover?: FailoverPreferences,
     private readonly failoverRuntime?: FailoverRuntime,
     private readonly availableFailoverRoutes?: () => ReadonlySet<string>,
+    private readonly modelLimits: () => Record<string, number> = () => ({}),
+    private readonly route: string = authProviderId === 'openai-codex' ? 'openai-codex-oauth' : 'anthropic-oauth',
   ) {}
 
   async status(): Promise<BrowserOAuthStatus> {
@@ -411,7 +368,7 @@ export class BrowserOAuthController {
       accounts,
       proxy: this.proxy.describe(),
       failover,
-      ...this.contextWindow === undefined ? {} : { contextWindow: this.contextWindow.status() },
+      ...this.contextWindow === undefined ? {} : { contextWindow: { ...this.contextWindow.status(), modelLimits: this.modelLimits() } },
     }
   }
 
@@ -474,6 +431,7 @@ export class BrowserOAuthController {
   }
 
   async refreshSession(): Promise<BrowserOAuthStatus> {
+    this.usage.invalidate()
     this.active?.cancel()
     this.active = undefined
     await this.proxy.refresh()
@@ -567,6 +525,10 @@ export class BrowserOAuthController {
   }
 
   async setAccountFailoverEffort(accountId: string, effortId: string | undefined): Promise<BrowserOAuthStatus> {
+    const account = (await this.store.accounts(this.authProviderId)).find(item => item.id === accountId)
+    if (!account) throw new HttpError(400, 'OAuth account not found.')
+    const route = this.route
+    await this.validateEffort(route, effortId, account.failoverModel)
     await this.store.setAccountFailoverEffort(this.authProviderId, accountId, effortId)
     return this.status()
   }
@@ -587,8 +549,23 @@ export class BrowserOAuthController {
     if (this.failover === undefined || this.failoverRuntime === undefined) {
       throw new HttpError(503, 'Failover settings are unavailable.')
     }
+    await this.validateEffort(providerId, effortId)
     await this.failover.setProviderEffort(providerId, effortId)
     return this.status()
+  }
+
+  private async validateEffort(providerId: string, effortId: string | undefined, accountModel?: string): Promise<void> {
+    if (!this.failover || !this.failoverRuntime) throw new HttpError(503, 'Failover settings are unavailable.')
+    if (!this.failoverRuntime.listProviders().some(provider => provider.id === providerId)) {
+      throw new HttpError(400, 'Failover provider is not registered.')
+    }
+    if (effortId === undefined) return
+    const models = await this.failoverRuntime.listModels(providerId)
+    const model = accountModel ?? await this.failover.modelFor(providerId, models.map(item => item.id))
+    const info = model === undefined ? undefined : await this.failoverRuntime.resolveModel?.(providerId, model)
+    if (!info?.reasoning?.efforts.some(effort => String(effort.id) === effortId)) {
+      throw new HttpError(400, 'This reasoning effort is not supported by the selected fallback model.')
+    }
   }
 
   async setProviderFailoverEnabled(providerId: string, enabled: boolean): Promise<BrowserOAuthStatus> {
@@ -606,6 +583,7 @@ export class BrowserOAuthController {
       throw new HttpError(503, 'Failover settings are unavailable.')
     }
     const detected = new Set(this.failoverRuntime.listProviders().map(provider => provider.id))
+    if (new Set(order).size !== order.length) throw new HttpError(400, 'Failover order contains a duplicate provider.')
     if (order.some(provider => !detected.has(provider))) throw new HttpError(400, 'Failover order contains an unknown provider.')
     await this.failover.setProviderOrder(order)
     return this.status()
@@ -638,9 +616,10 @@ export function installBrowserOAuth(
   failover?: FailoverPreferences,
   failoverRuntime?: FailoverRuntime,
   availableFailoverRoutes?: () => ReadonlySet<string>,
+  modelLimits?: () => Record<string, number>,
 ): void {
   const prefix = `${API_ROOT}/${encodeURIComponent(route)}`
-  ctx.inject(['webServer'], (webCtx) => {
+  ctx.inject(['webServer', 'connection'], (webCtx) => {
     const controller = new BrowserOAuthController(
       models,
       store,
@@ -654,6 +633,8 @@ export function installBrowserOAuth(
       failover,
       failoverRuntime,
       availableFailoverRoutes,
+      modelLimits,
+      route,
     )
     webCtx.effect(() => {
       const disposeRoute = webCtx.webServer.register({
@@ -661,6 +642,8 @@ export function installBrowserOAuth(
         path: prefix,
         handler: async (req, res) => {
           try {
+            const rejected = webCtx.connection.requestRejection(req)
+            if (rejected !== undefined) throw new HttpError(rejected, rejected === 401 ? 'Browser authentication required.' : 'Untrusted request.')
             const requestUrl = new URL(req.url ?? prefix, 'http://localhost')
             const action = requestUrl.pathname.slice(prefix.length) || '/status'
             const isHead = req.method === 'HEAD'

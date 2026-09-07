@@ -1,154 +1,104 @@
-# DeepSeek Harness OAuth model providers
+# 模型與帳號控制中心
 
-An experimental DeepSeek Harness bundle that adds two independent LLM routes:
+**中文** | [English](README.en.md)
 
-- `openai-codex-oauth` — OpenAI Codex models authenticated with a ChatGPT subscription login.
-- `anthropic-oauth` — Anthropic Claude models authenticated with a Claude Pro/Max login.
+在 DeepSeek Harness 裡管理 OpenAI Codex 與 Anthropic Claude OAuth 帳號。登入、額度、上下文、代理和備援集中在一個介面，不需要在多個設定頁來回尋找。
 
-The bundle uses DeepSeek Harness services for model routing, a same-origin Settings wizard, and durable credential references. OAuth login and refresh are provided by `@earendil-works/pi-ai`. After sign-in, the plugin fetches the account's provider-owned model catalog and keeps the bundled `pi-ai` catalog as an offline/failure fallback.
+> **版本 0.9.0**：面向 DSH `0.1.2-rc.1`，並針對 `0.1.3-alpha.2` 做獨立相容性檢查。兩個 DSH 版本都仍是預發佈版本；這不是相容所有未來版本的保證。舊外掛 0.8.0 不適合直接配合新的 DSH 使用。
 
-> [!WARNING]
-> Using provider OAuth accounts through a third-party harness may violate the provider's terms of service and may result in account restriction, suspension, or termination. Use this project entirely at your own risk. The author and contributors accept no responsibility or liability for account action, lost access, data loss, charges, or any other direct or indirect damage arising from its use.
+## 安裝與升級
 
-## Compatibility
+先備份你的 DSH Profile 設定與憑證儲存區；不要把備份上傳到 GitHub。升級外掛不需要刪除帳號或會話。
 
-- DeepSeek Harness `0.1.0-rc.6` (`next` channel)
-- Node.js `22.19.0` or newer (Node 24 is supported)
-- `@earendil-works/pi-ai` `0.82.1`
-
-DeepSeek Harness is currently a developer preview. Pin the versions above and expect changes while its plugin API is pre-release.
-
-## Install
-
-Install the packed bundle into a Web profile:
+1. 安裝或更新 DSH，確認 `dsh --version`。
+2. 到本倉庫的 [Releases](https://github.com/p90-lover/dsh-plugin-codex-claude-auth/releases) 下載 `dsh-oauth-model-providers-0.9.0.tgz` 與 `SHA256SUMS`。
+3. 在下載目錄執行：
 
 ```powershell
-dsh plugin --profile web add .\dsh-oauth-model-providers-0.8.0.tgz
-dsh --profile web
+dsh plugin --profile web add .\dsh-oauth-model-providers-0.9.0.tgz
 ```
 
-Use `dsh plugin` for profile installation. Do not run `npm install` directly inside `$DSH_HOME/profiles/web`: npm auto-installs the Harness peer packages and can create a second DSH runtime, which breaks agent scope identity during session resume.
+重新啟動該 DSH Profile，再開啟 **設定 → 模型與帳號 / OAuth**。請使用套件提供的三個具名載入項目，不要把 `lib/index.js`、`openai.js`、`anthropic.js` 分別以絕對路徑手動加入 Loader；那會讓瀏覽器模組被重複識別。
 
-For a source checkout, install dependencies, build it, and give `dsh plugin add` the package directory instead:
+Node.js 需求跟隨 Harness：`^22.19.0 || >=24.0.0`。本專案的發佈驗證使用 Node 24。
 
-```powershell
-pnpm install
-pnpm run build
-dsh plugin --profile web add .
+## 首次登入
+
+在 **帳號與額度** 選擇 OpenAI 或 Claude，按 **連接帳號**，再開啟提供者登入頁。完成瀏覽器授權後，依畫面指示返回；若自動回呼沒有完成，可貼回授權碼或返回網址。
+
+OAuth 登入仍受提供者帳號、方案、地區與使用條件限制。請只連接你有權使用的帳號。登入資料由本機 DSH 憑證服務保存，不會寫進本專案或診斷下載檔。
+
+「已登入」只表示已有本機登入資料，**不是**外部服務健康或額度充足的保證。
+
+## 日常使用
+
+| 功能 | 你會看到什麼 | 操作方式 |
+| --- | --- | --- |
+| 帳號與額度 | 使用中的帳號、剩餘額度、重設時間 | 新增、切換或重新整理帳號；登出前需確認 |
+| 上下文 | 要求上限與各模型的有效上限 | 選預設或自訂數量，按「套用上下文」 |
+| 代理路由 | 代理名稱、去除密碼的主機、指派來源 | 儲存代理，再指定提供者或帳號 |
+| 自動備援 | 可用目的地、順序、目的模型、推理強度 | 明確允許目的地後才會跨提供者備援 |
+| 診斷 | 宿主回應狀態、最近更新時間 | 匯出去識別化診斷快照 |
+| 工作交接 | 你填寫的目標、進度、下一步與相對路徑 | 人工檢閱後匯出 Markdown 或 JSON |
+
+### 額度從 100% 倒數到 0%
+
+數值表示**剩餘額度**。沒有取得資料時顯示「暫無資料」，不會假裝還有 100%。Claude 顯示 5 小時與每週兩種限額；OpenAI 顯示收到的限制中較嚴格的剩餘值。
+
+輸入框旁的摘要跟隨該會話真正選擇的提供者：用 Claude 時不會顯示 OpenAI 用量或 OpenAI 上下文控制。
+
+### 上下文：選項不等於模型能力
+
+提供 `252K`、`353K`、`500K`、`1M` 和 `Custom`。自訂要求上限為 **252,000–1,000,000 tokens**；實際上限是「要求值」與「模型公開的原生上限」中較小者。只有 400K 的模型不會被標成可用 1M。
+
+儲存後更新提供者模型快照，後續請求使用新設定；已在執行中的請求不會被中途更換。自動壓縮仍由 DSH Agent Preset 管理，外掛不會額外掛載壓縮服務，也不會把顯示值誤當作固定 90% 壓縮門檻。OpenAI 路由的遠端壓縮失敗時，會回退到 DSH 既有的摘要路徑。
+
+### 代理設定的優先順序
+
+**有效的帳號覆寫 → 有效的提供者覆寫 → 共用預設 → Harness 原本的出站網路設定。**
+
+代理 URL 是只寫入的秘密；介面只顯示名稱與去除認證資訊的主機。支援 HTTP/HTTPS，不支援 SOCKS/PAC。登入網頁使用瀏覽器自己的網路設定。登入進行中不能改代理，請先取消登入。
+
+### 備援是明確授權，不是無限重試
+
+跨提供者備援預設關閉。只允許你信任的目的地，因為對話與專案內容可能隨請求送往另一家提供者。既有明確啟用的設定會保留。
+
+外掛先嘗試同一提供者的另一個已存帳號，再嘗試一個允許的目的地。模型與推理強度可設提供者預設，也可由個別帳號覆寫。不支援的推理強度會被拒絕。已提交輸出或工具結果後，不會自動重播請求，避免重複副作用。
+
+重設額度兌換是另外的帳號選項，預設不開啟；勾選前請確認你接受消耗提供者發給該帳號的重設額度。
+
+### 跨 Harness 工作交接
+
+此版本提供**手動、可檢閱的任務交接**：填寫目標、已完成工作、下一步與專案相對路徑，匯出摘要後帶到目標 Harness 的新會話。它不會讀取所列檔案，也不會啟動 Codex/Claude Code、搬移權杖、繼承工具權限或匯入其他應用程式的原生會話記錄。
+
+開發者可使用 `dsh-oauth-model-providers/handoff` 的 `createHandoff`、`parseHandoff`、`renderHandoff` 與 `preflightHandoff`。預檢拒絕執行中的來源、未完成工具呼叫、未驗證登入或不支援交接的目的地。這是可擴充的交接資料層，**不是已完成的跨應用程式自動遷移器**。
+
+### 程式碼審查
+
+只有目前會話提供 `/review` 時才允許啟動。按鈕等待宿主確認排入審查，不會只改畫面就聲稱已完成。唯讀審查指示不取代 DSH 的實際權限設定；仍需選擇適合的 Preset 與審批政策。
+
+## 常見問題
+
+**按鈕失敗或額度空白？** 先按「更新狀態」；再看個別提供者的錯誤。401 通常代表瀏覽器驗證失效，請重新開啟 DSH 提供的入口。不要把入口網址裡的一次性 token 貼到公開 Issue。
+
+**設定已儲存，畫面仍是舊的？** 確認同一個 Profile 只載入一份外掛，再重啟 Profile。外掛會防止舊的背景讀取覆蓋已確認的新設定。
+
+**登出會刪除對話嗎？** 不會；它移除該提供者的本機登入。遠端授權要到提供者帳號網站另行撤銷。
+
+**不同 Harness 可以直接共用同一份會話嗎？** 不能假設可以。原生記錄、工具名稱、審批與壓縮格式不同，請使用可檢閱的工作交接，而不是直接複製憑證或重播工具。
+
+## 開發與驗證
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run check
+pnpm exec playwright install --with-deps chromium
+pnpm run test:browser
+pnpm pack
 ```
 
-The bundle inserts both routes. It does not replace the built-in API-key providers.
+測試包含宿主驗證邊界、額度解析、代理指派、模型快照、備援副作用保護、前端失敗狀態與手動交接驗證。瀏覽器測試使用獨立臨時 Profile；不使用真實 OAuth 帳號。CI 成功不代表已替你登入並實測每一家提供者。
 
-## Sign in from Settings and use a model
+安全資訊見 [SECURITY.md](SECURITY.md)，變更見 [CHANGELOG.md](CHANGELOG.md)。發現問題時，請附 DSH 版本、外掛版本、重現步驟及去識別化診斷，不要附權杖、代理密碼或完整私人對話。
 
-In Harness Web:
-
-1. Optionally open **Settings → Proxies**, add one or more named HTTP(S) proxies, and select the proxy for each provider. The first proxy is the default; this provider choice also covers a new OAuth login before its account exists.
-2. Open **Settings → OAuth Providers**.
-3. Click **Add Codex OAuth** or **Add Claude OAuth** and complete the steps inside the provider card. No command, chat, or Harness question overlay is required.
-4. Open the provider sign-in page. The card polls the host-owned flow and automatically detects the local OAuth callback (`localhost:1455` for Codex or `localhost:53692` for Claude). Pasting the returned URL/code remains available as a fallback.
-5. After sign-in succeeds, the provider appears in **Settings → Models**. Return to **Settings → Proxies** if that account needs an override instead of its provider/default proxy.
-
-Use the English / 繁體中文 selector at the top of this section; English is the default for this plugin page.
-
-The legacy `/login-openai`, `/login-claude`, `/status-openai`, and `/status-claude` commands remain available as optional compatibility fallbacks, but the Settings flow does not invoke them.
-
-## Remote compaction and code review
-
-Automatic compaction timing is owned by the active DSH agent preset. With the pinned DSH 0.1.0-rc.6 packages, compaction-basic defaults to 80% of the effective routed-model context unless the preset or user configuration changes thresholdRatio. This bundle does not mount a second compaction service.
-
-When DSH starts either automatic or manual compaction on the OpenAI OAuth route, the plugin sends the full Responses input to OpenAI's provider-native remote compaction endpoint. Its canonical output is stored inside the DSH checkpoint and expanded back into the next request without pruning. The plugin does not launch the Codex CLI or type /compact. If that endpoint fails, the same compaction attempt continues through DSH's local summary path.
-
-Click **Code review** in the composer to review staged, unstaged, and untracked changes without modifying files. The equivalent commands are:
-
-```text
-/review
-/review base main
-/review commit HEAD~1
-/review custom security and data-loss issues only
-```
-
-**Auto review** is disabled by default and remembered in the browser when you opt in. After a newly completed OpenAI Codex turn, it starts a review only when the working-tree fingerprint is new. It skips clean trees, unchanged diffs, Claude turns, and the review turn itself. The review is queued as a dedicated model turn. Its P0-P3 findings, or `No actionable findings.`, remain in the chat transcript.
-
-## Usage, context window, and failover
-
-A compact box beside the normal DSH composer follows the model selected for that session. An OpenAI session shows only OpenAI remaining quota and its context controls; a Claude session shows only Claude 5-hour and weekly remaining quota. Percentages begin at 100% after a reset and count down to 0% when exhausted. Reset details remain available on hover.
-
-OpenAI defaults to `252K` and offers `353K`, `500K`, `1M`, and a custom integer from 252,000 through 1,000,000 tokens. The selection is credential-backed. After a save, the client reloads the active session's model directory so the next prompt uses newly published context metadata without requiring a browser or DSH restart. The box uses a DSH input slot and does not replace or take ownership of the text area.
-
-Open **Settings → Failover** to see every provider DSH currently registers or declares as configurable. Choose which available providers may be used, set their order, and select both a provider-level fallback model and one of that exact model's advertised reasoning-effort levels. With no explicit model, the plugin chooses a semantic middle tier when one is identifiable (for example Sonnet, Terra, Balanced, Standard, or Chat), otherwise the middle catalog entry. With no explicit effort, it uses the destination model's own default. Each OAuth account can override the provider model and effort independently or inherit them.
-
-Automatic failover is deliberately bounded:
-
-1. A retryable pre-output provider failure first rotates to the next OAuth account, when one exists.
-2. If that retry also fails, the request moves to the first enabled alternative provider using the configured account/provider model.
-3. If the alternative provider fails, the turn ends; the plugin does not cascade through every provider.
-
-Account and provider changes are written as permanent bilingual text in the chat. Later turns in that session remain pinned to the successful fallback route even though the original picker selection is unchanged. Foreign replay state and source-model defaults are removed before retargeting, then the destination model's own reasoning/output defaults are resolved, preventing provider/model replay mismatches. Failover only happens before model output; it never replays a partially emitted answer or tool call.
-
-## Codex tool calls inside DSH
-
-The OpenAI OAuth route uses DSH's normal tool runtime. DSH function schemas are passed to the Codex Responses request; streamed tool calls retain their names, arguments, and `call_id`; DSH executes the tools; and the linked results plus replay metadata are sent back on the next model step. The route wrapper normalizes the durable provider identity to `openai-codex-oauth`, preventing the upstream/public-provider mismatch that previously produced `INVALID_REPLAY_STATE`.
-
-Use **Disconnect** on the same Settings page, or run `/logout-openai` or `/logout-claude`. Logout removes the locally stored grant and hides that provider from the model picker; it does not promise remote revocation. Revoke the grant in the provider account when that matters.
-
-## Credential storage
-
-Tokens are serialized as one JSON secret per provider through the Harness credentials service:
-
-- OpenAI: `DSH_OPENAI_CODEX_OAUTH`
-- Anthropic: `DSH_ANTHROPIC_OAUTH`
-- OpenAI proxy: `DSH_OPENAI_CODEX_PROXY`
-- Anthropic proxy: `DSH_ANTHROPIC_PROXY`
-- Reusable proxy list: `DSH_OAUTH_SHARED_PROXY`
-- Failover order/provider defaults: `DSH_OAUTH_FAILOVER_CONFIG`
-
-With the standard local credentials provider, those references live in the Harness credentials store under `$DSH_HOME`. The status command exposes only sign-in and expiry state, never token contents. Refresh writes are serialized within one Harness process.
-
-Do not copy `.credentials.yaml`, logs containing redirect URLs, proxy URLs, or a populated Harness home into source control. OAuth callback URLs contain short-lived authorization codes and should be treated as secrets.
-
-## Proxy behavior
-
-The first entry in the reusable proxy list is the default. A provider assignment overrides that default for its OAuth login and unassigned accounts; an account assignment overrides both. The same selected HTTP or HTTPS forward proxy is applied with an async-scoped fetch dispatcher to OAuth token exchange/refresh, usage/catalog checks, and model requests. When a proxy is selected, model transport is forced to SSE so the request remains on its HTTP proxy path. SOCKS and PAC URLs are rejected.
-
-Proxy URLs are write-only from the Settings client. Public status contains only the proxy ID, user-supplied name, redacted host, and provider/account assignment. Removing an assigned proxy safely falls back to the current first entry.
-
-The external sign-in website is opened by your browser, so that page still follows the browser's own proxy/network settings. The plugin proxy covers DSH host traffic; it does not silently reconfigure the browser or Windows.
-
-## Automatic model discovery
-
-OpenAI Codex discovery reads the authenticated ChatGPT Codex catalog. Anthropic discovery reads the authenticated Models API, including capability and token-limit metadata when returned. Catalog and usage traffic use the same effective provider/account proxy as OAuth and inference traffic.
-
-If discovery is unavailable, times out, or returns an invalid response, the plugin keeps the last known catalog; on a fresh start it falls back to the bundled `pi-ai` models. A catalog failure does not remove an already connected provider.
-
-## Configuration
-
-The inserted Cordis row ids are `llm-openai-codex-oauth` and `llm-anthropic-oauth`. A profile patch can replace either row's config. A DeepSeek Harness id-targeted patch replaces the whole config, so restate every non-default value you want to keep. Start from [`config/examples/oauth-providers.example.yml`](config/examples/oauth-providers.example.yml).
-
-Runtime configuration is deliberately separate from source control. Keep local overrides under `config/runtime/` or name them `config/*.local.yml`; both forms are ignored. OAuth credentials, proxy URLs, populated profiles, and callback URLs must remain in the Harness credential/profile store and never be copied into this repository. The tracked `cordis.patch.yml` is only the secret-free bundle composition manifest required by DSH.
-
-Optional transport controls are `transport`, `timeoutMs`, `websocketConnectTimeoutMs`, and `retryPolicy`, matching `dsh-llm-pi-ai` behavior.
-
-## Important limits
-
-- OpenAI OAuth here is the Codex/ChatGPT subscription route. It is not a way to turn a ChatGPT subscription into arbitrary OpenAI API access.
-- Anthropic OAuth here targets the Claude Pro/Max flow used by Claude coding tools. It is not the Anthropic API-key route.
-- These consumer OAuth flows are not documented as a stable, general-purpose third-party integration contract. Provider-side policy or protocol changes can break them. Check the applicable provider terms before use; prefer official API credentials for production integrations.
-- Refresh serialization is process-local. Do not run multiple Harness processes against the same OAuth credential reference, because rotating refresh tokens can race across processes.
-- Remote model catalogs are advisory provider responses. The bundled catalog remains the safety fallback when discovery cannot be completed.
-- A real account login was deliberately not automated by the test suite. Complete each login interactively and verify one model request in your own profile.
-- A successful proxy setup check is not proof of a completed model request. Verify one real request after OAuth succeeds.
-
-## Development checks
-
-```powershell
-pnpm run typecheck
-pnpm test
-pnpm run build
-```
-
-The focused tests cover remote compaction request/restore behavior, automatic and manual read-only review contracts, Codex tool definition/call/result identity, secret-safe credential metadata, serialized refresh mutations, replay-route compatibility, authenticated catalog parsing/fallback, stored-credential callback reconciliation, reusable proxy migration/default/assignment precedence, proxy URL redaction, proxy stream options, custom 252K–1M context-window persistence and live directory refresh, active-provider-only remaining-quota helpers, configurable failover effort, and bounded account-first/provider-second failover.
-
-## License
-
-Anyone may download the source and use, study, modify, and redistribute it for permitted noncommercial purposes under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial or anticipated commercial use requires a separate commercial license from the copyright holder. MIT is not applied because the MIT License permits commercial use. PolyForm Noncommercial is source-available, not an OSI-approved open-source license.
+授權維持原專案的 [PolyForm Noncommercial](LICENSE)。介面採 SaaS 產品風格不會改變授權條件。

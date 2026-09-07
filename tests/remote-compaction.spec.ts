@@ -105,8 +105,8 @@ describe('OpenAI remote compaction', () => {
       baseUrl: 'https://chatgpt.com/backend-api',
       auth: { apiKey: { name: 'Key', resolve: async () => undefined } },
       getModels: () => [model],
-      stream: (selected, context, options) => fakeStream(selected, context, options, value => seen.push(value)),
-      streamSimple: (selected, context, options) => fakeStream(selected, context, options, value => seen.push(value)),
+      stream: (selected, context, options) => fakeStream(selected, context, options as SimpleStreamOptions, value => seen.push(value)),
+      streamSimple: (selected, context, options) => fakeStream(selected, context, options as SimpleStreamOptions, value => seen.push(value)),
     }
     const canonical = [
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'retained' }] },
@@ -175,8 +175,8 @@ describe('OpenAI remote compaction', () => {
       name: 'OpenAI Codex',
       auth: { apiKey: { name: 'Key', resolve: async () => undefined } },
       getModels: () => [model],
-      stream: (selected, context, options) => fakeStream(selected, context, options, () => undefined),
-      streamSimple: (selected, context, options) => fakeStream(selected, context, options, () => undefined),
+      stream: (selected, context, options) => fakeStream(selected, context, options as SimpleStreamOptions | undefined, () => undefined),
+      streamSimple: (selected, context, options) => fakeStream(selected, context, options as SimpleStreamOptions | undefined, () => undefined),
     }
     vi.stubGlobal('fetch', vi.fn(async () => new Response('preview unavailable', { status: 503 })))
 

@@ -1,6 +1,8 @@
-import { isTokenDelta, LlmAdapter } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions,
+  PreparedAdapterCall,
+  LlmImageRequestPricing,
   LlmModelInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
@@ -10,6 +12,13 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import type { HarnessCredentialBackend } from './credential-store.ts'
+
+// This predicate is local because the baseline Harness does not export isTokenDelta.
+function isTokenDelta(chunk: StreamChunk): boolean {
+  if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') return chunk.text.length > 0
+  if (chunk.type === 'tool-call-delta') return chunk.argumentsDelta.length > 0 || chunk.name !== undefined
+  return false
+}
 
 const FAILOVER_REF = 'DSH_OAUTH_FAILOVER_CONFIG' as CredentialRef
 const MAX_STICKY_SESSIONS = 256
@@ -130,7 +139,6 @@ export class FailoverPreferences {
       ...stored.providerOrder.filter(provider => detected.includes(provider)),
       ...detected.filter(provider => !stored.providerOrder.includes(provider)),
     ]
-    if (stored.providerOrder.length === 0 && stored.enabledProviders.length === 0) return ordered
     return ordered.filter(provider => stored.enabledProviders.includes(provider))
   }
 
@@ -158,9 +166,7 @@ export class FailoverPreferences {
 
   setProviderEnabled(provider: string, enabled: boolean, detectedProviders: readonly string[]): Promise<void> {
     return this.update((current) => {
-      const defaultEnabled = current.providerOrder.length === 0 && current.enabledProviders.length === 0
-        ? [...new Set(detectedProviders)]
-        : current.enabledProviders
+      const defaultEnabled = current.enabledProviders
       return {
         ...current,
         providerOrder: [
@@ -178,9 +184,7 @@ export class FailoverPreferences {
     return this.update(current => ({
       ...current,
       providerOrder: [...new Set(order)],
-      enabledProviders: current.providerOrder.length === 0 && current.enabledProviders.length === 0
-        ? [...new Set(order)]
-        : current.enabledProviders,
+      enabledProviders: current.enabledProviders,
     }))
   }
 
@@ -216,9 +220,7 @@ export class FailoverPreferences {
       ...stored.providerOrder.filter(provider => detectedIds.includes(provider)),
       ...detectedIds.filter(provider => !stored.providerOrder.includes(provider)),
     ]
-    const enabled = stored.providerOrder.length === 0 && stored.enabledProviders.length === 0
-      ? new Set(detectedIds)
-      : new Set(stored.enabledProviders)
+    const enabled = new Set(stored.enabledProviders)
     const byId = new Map(providers.map(provider => [provider.id, provider]))
     const entries = await Promise.all(order.map(async (id): Promise<FailoverProviderCatalog> => {
       const models = await runtime.listModels(id).catch(() => [])
@@ -398,6 +400,17 @@ export class AutoFailoverAdapter extends LlmAdapter {
     return state.delegate.resolveModel(provider, model, signal)
   }
 
+  override imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined {
+    return this.routes.get(provider)?.delegate.imageRequestPricing(provider, model)
+  }
+
+  override async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    const state = this.routes.get(provider)
+    if (state === undefined) throw new Error('Provider is not registered.')
+    const prepared = await state.delegate.prepareCall(provider, model, signal)
+    return { model: prepared.model, stream: options => this.streamPrepared(options, prepared) }
+  }
+
   private async selectedModel(provider: string): Promise<string | undefined> {
     const models = this.routes.has(provider)
       ? [...await this.routes.get(provider)!.delegate.listModels(provider)]
@@ -440,15 +453,17 @@ export class AutoFailoverAdapter extends LlmAdapter {
     options: GenerateOptions,
     source: Pick<GenerateOptions, 'provider' | 'model'>,
     offset: number,
+    prepared?: PreparedAdapterCall,
   ): AsyncIterable<StreamChunk> {
     let emitted = false
+    const pending: StreamChunk[] = []
     let usage: Extract<StreamChunk, { type: 'usage' }> | undefined
     try {
       const request = {
         ...options,
         messages: withoutForeignReplay(options.messages, options.provider, options.model),
       }
-      for await (const chunk of this.streamFor(request)) {
+      for await (const chunk of prepared === undefined ? this.streamFor(request) : prepared.stream(request)) {
         if (chunk.type === 'usage') {
           usage = chunk
           continue
@@ -457,14 +472,24 @@ export class AutoFailoverAdapter extends LlmAdapter {
           if ((chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') && !emitted) {
             throw new AttemptFailure(chunk.reason.failure.message, usage, chunk)
           }
+          for (const prefix of pending.splice(0)) yield indexed(prefix, offset)
           if (usage !== undefined) yield usage
           yield options.provider === source.provider && options.model === source.model
             ? chunk
             : { type: 'finish', reason: chunk.reason }
           return
         }
-        if (isTokenDelta(chunk)) emitted = true
-        yield indexed(chunk, offset)
+        // Empty block headers are provisional. Publishing them before a retry
+        // would duplicate indices in the assembled response. A completed block
+        // is committed output even when the provider emitted no deltas.
+        if (isTokenDelta(chunk) || chunk.type === 'block-end') {
+          emitted = true
+          for (const prefix of pending.splice(0)) yield indexed(prefix, offset)
+        }
+        if (!emitted) {
+          if (pending.length >= 1024) throw new Error('Provider emitted too many empty stream blocks.')
+          pending.push(chunk)
+        } else yield indexed(chunk, offset)
       }
     } catch (error) {
       if (error instanceof AttemptFailure || emitted) throw error
@@ -478,13 +503,22 @@ export class AutoFailoverAdapter extends LlmAdapter {
     yield error.finish
   }
 
-  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+  override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    return this.streamPrepared(options)
+  }
+
+  private async *streamPrepared(options: GenerateOptions, prepared?: PreparedAdapterCall): AsyncIterable<StreamChunk> {
     const source = { provider: options.provider, model: options.model }
     const sessionKey = options.sessionId === undefined ? undefined : String(options.sessionId)
-    const prior = sessionKey === undefined ? undefined : this.sticky.get(sessionKey)
-    if (prior !== undefined
-      && (prior.sourceProvider !== options.provider || prior.sourceModel !== options.model)) {
-      this.sticky.delete(sessionKey!)
+    let prior = sessionKey === undefined ? undefined : this.sticky.get(sessionKey)
+    if (prior !== undefined) {
+      const allowed = await this.preferences.effectiveOrder([...this.availableRoutes()])
+      if (prior.sourceProvider !== options.provider || prior.sourceModel !== options.model
+        || !this.availableRoutes().has(prior.targetProvider)
+        || (prior.targetProvider !== source.provider && !allowed.includes(prior.targetProvider))) {
+        this.sticky.delete(sessionKey!)
+        prior = undefined
+      }
     }
     let selected = prior !== undefined
       ? { provider: prior.targetProvider, model: prior.targetModel }
@@ -494,7 +528,7 @@ export class AutoFailoverAdapter extends LlmAdapter {
       : await this.retargetRequest(options, selected.provider, selected.model)
 
     try {
-      for await (const chunk of this.attempt(request, source, 0)) yield chunk
+      for await (const chunk of this.attempt(request, source, 0, selected.provider === source.provider && selected.model === source.model ? prepared : undefined)) yield chunk
       return
     } catch (firstError) {
       if (!(firstError instanceof AttemptFailure) || !retryableFailure(firstError)) throw firstError
