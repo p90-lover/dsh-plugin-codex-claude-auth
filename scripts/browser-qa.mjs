@@ -25,6 +25,7 @@ try {
   await once(server, 'listening')
   browser = await chromium.launch({ headless: true })
   const page = await browser.newPage({ viewport: { width: 1440, height: 1080 } })
+  page.setDefaultTimeout(20000)
   page.on('pageerror', error => findings.consoleErrors.push(error.message))
   await page.goto(`http://127.0.0.1:${server.address().port}`)
   await page.getByText('Example workspace · test data').first().waitFor()
@@ -47,7 +48,6 @@ try {
   await page.getByRole('tab', { name: '自動備援', exact: true }).click()
   const allow = page.getByRole('checkbox', { name: '允許此目的地', exact: true }).first()
   assert.equal(await allow.isChecked(), false)
-  // This is a server-confirmed control, not an optimistic checkbox.
   await allow.click()
   await page.getByText('備援設定已儲存。').waitFor()
   assert.equal(await allow.isChecked(), true)
@@ -76,7 +76,6 @@ try {
   await page.screenshot({ path: join(output, 'accounts-mobile.png'), fullPage: true })
   findings.fixture.push('420px viewport retains usable cards and no control-center horizontal overflow.')
 
-  // A second, real Harness boot proves the package Loader and browser integration.
   const home = join(temp, 'home')
   const profileModules = join(home, 'profiles', 'web', 'node_modules')
   await mkdir(profileModules, { recursive: true })
@@ -96,13 +95,17 @@ try {
     await new Promise(r => setTimeout(r, 300))
   }
   if (!url) throw new Error('Isolated Harness boot timed out.')
-  const unauth = await fetch('http://127.0.0.1:3097/plugins/dsh-oauth-model-providers/oauth/openai-codex-oauth/status')
+  const unauth = await fetch('http://127.0.0.1:3097/plugins/dsh-oauth-model-providers/oauth/openai-codex-oauth/status', { signal: AbortSignal.timeout(15000) })
   assert.equal(unauth.status, 401)
   findings.native.push('Unauthenticated plugin status returns 401 on the actual native web server.')
   native = await browser.newPage({ viewport: { width: 1440, height: 1080 } })
+  native.setDefaultTimeout(20000)
   native.on('pageerror', e => findings.consoleErrors.push(e.message))
   await native.goto(url)
-  await native.getByRole('button', { name: /^(Settings|设置|設定)$/ }).first().click({ timeout: 60000 })
+  // Complete only the isolated test profile's first-run notice and defer login.
+  await native.getByRole('button', { name: /^(Continue|继续|繼續)$/ }).click()
+  await native.getByRole('button', { name: /^(Configure later|稍后配置|稍後設定)$/ }).click()
+  await native.getByRole('button', { name: /^(Settings|设置|設定)$/ }).first().click()
   await native.getByText('模型與帳號 / OAuth', { exact: true }).click()
   await native.getByRole('heading', { name: '模型與帳號', exact: true }).waitFor()
   await native.screenshot({ path: join(output, 'native-harness-control-center.png'), fullPage: true })
