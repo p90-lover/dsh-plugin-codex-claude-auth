@@ -40,18 +40,24 @@ jobs:
             for (const key of Object.keys(p[section] ?? {})) {
               if (key.startsWith('@deepseek-ai/dsh-')) p[section][key] = process.env.DSH_VERSION;
             }
+            p[section]['@deepseek-ai/cordis'] = '4.0.2';
           }
-          const modules = ['api-session-controller', 'client-ui-session', 'client-ui-renderer', 'client-ui-chat', 'client-ui-settings-models', 'client-store', 'authorization', 'launch-environment', 'fs', 'attachment', 'tools'];
+          const modules = ['api-gateway', 'typert-protocol', 'scope', 'invariants', 'api-session-controller', 'client-ui-session', 'client-ui-renderer', 'client-ui-chat', 'client-ui-settings-models', 'client-store', 'authorization', 'launch-environment', 'fs', 'attachment', 'tools'];
           for (const suffix of modules) p.devDependencies['@deepseek-ai/dsh-' + suffix] = process.env.DSH_VERSION;
+          p.devDependencies['@deepseek-ai/dsh'] = process.env.DSH_VERSION;
           p.peerDependencies['@earendil-works/pi-ai'] = process.env.DSH_VERSION === '0.1.2-rc.1' ? '0.84.2' : '0.85.1';
           p.devDependencies['@earendil-works/pi-ai'] = p.peerDependencies['@earendil-works/pi-ai'];
+          p.dependencies.undici = '7.29.0';
           p.devDependencies['@testing-library/react'] = '16.3.0';
           p.devDependencies['@testing-library/user-event'] = '14.6.1';
-          p.devDependencies['jsdom'] = '26.1.0';
+          p.devDependencies.jsdom = '26.1.0';
           p.devDependencies['react-dom'] = '18.3.1';
           p.devDependencies['@types/react-dom'] = '18.3.7';
-          p.devDependencies['playwright'] = '1.55.0';
+          p.devDependencies.playwright = '1.55.0';
           fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          fs.writeFileSync('pnpm-workspace.yaml', "onlyBuiltDependencies: []\n");
+          fs.rmSync('pnpm-lock.yaml', { force: true });
+          fs.copyFileSync(process.execPath, 'audit/runtime-node');
           JS
           pnpm install --no-frozen-lockfile
       - name: Record compatibility and vulnerability evidence
