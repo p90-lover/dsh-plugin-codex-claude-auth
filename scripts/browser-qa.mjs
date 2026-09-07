@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url)
 const output = resolve(process.env.QA_OUTPUT ?? 'artifacts/browser')
 await mkdir(output, { recursive: true })
 const temp = await mkdtemp(join(tmpdir(), 'dsh-oauth-qa-'))
-let server, host, browser
+let server, host, browser, native
 const findings = { fixture: [], native: [], consoleErrors: [] }
 try {
   await build({ config: false, entry: { fixture: 'tests/browser/fixture.tsx' }, outDir: join(temp, 'ui'), platform: 'browser', format: 'iife', dts: false, clean: true, deps: { alwaysBundle: [/.*/], onlyBundle: false }, define: { 'process.env.NODE_ENV': JSON.stringify('production') } })
@@ -45,9 +45,14 @@ try {
   assert.equal((await page.locator('body').innerText()).includes('test:fake'), false)
   await page.screenshot({ path: join(output, 'proxy-desktop.png'), fullPage: true })
   await page.getByRole('tab', { name: '自動備援', exact: true }).click()
-  await page.getByRole('checkbox', { name: '允許此目的地', exact: true }).first().check()
+  const allow = page.getByRole('checkbox', { name: '允許此目的地', exact: true }).first()
+  assert.equal(await allow.isChecked(), false)
+  // This is a server-confirmed control, not an optimistic checkbox.
+  await allow.click()
   await page.getByText('備援設定已儲存。').waitFor()
+  assert.equal(await allow.isChecked(), true)
   await page.getByRole('combobox', { name: '推理強度', exact: true }).first().selectOption('high')
+  await page.waitForFunction(() => document.querySelectorAll('.o-fields select')[1]?.value === 'high')
   await page.screenshot({ path: join(output, 'fallback-desktop.png'), fullPage: true })
   assert.equal(await page.evaluate(() => window.fixture.mutations.some(m => m.action === '/failover/effort' && m.body.effortId === 'high')), true)
   findings.fixture.push('Context save, proxy add/redaction, explicit fallback enable and effort write acknowledged.')
@@ -78,7 +83,6 @@ try {
   await symlink(resolve('.'), join(profileModules, 'dsh-oauth-model-providers'), process.platform === 'win32' ? 'junction' : 'dir')
   const cli = require.resolve('@deepseek-ai/dsh/package.json')
   const cliBin = join(cli.substring(0, cli.lastIndexOf('/')), 'lib', 'bin.js')
-  // The package exports its bin without a main on some versions.
   const command = process.env.DSH_CLI_BIN ?? cliBin
   let bootLog = ''
   host = spawn(process.execPath, [command, '--profile', 'web', '--patch', resolve('cordis.patch.yml'), '--no-open', '--port', '3097'], { env: { ...process.env, DSH_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -88,14 +92,14 @@ try {
   while (Date.now() < until) {
     url = bootLog.match(/http:\/\/127\.0\.0\.1:3097\/\?token=[^\s]+/)?.[0]
     if (url) break
-    if (host.exitCode !== null) throw new Error('Isolated Harness boot failed; no credential-bearing log is published.')
+    if (host.exitCode !== null) throw new Error('Isolated Harness boot failed: ' + bootLog.replace(/([?&](?:token|code|state)=)[^\s&]+/gu, '$1[redacted]').slice(-5000))
     await new Promise(r => setTimeout(r, 300))
   }
   if (!url) throw new Error('Isolated Harness boot timed out.')
   const unauth = await fetch('http://127.0.0.1:3097/plugins/dsh-oauth-model-providers/oauth/openai-codex-oauth/status')
   assert.equal(unauth.status, 401)
   findings.native.push('Unauthenticated plugin status returns 401 on the actual native web server.')
-  const native = await browser.newPage({ viewport: { width: 1440, height: 1080 } })
+  native = await browser.newPage({ viewport: { width: 1440, height: 1080 } })
   native.on('pageerror', e => findings.consoleErrors.push(e.message))
   await native.goto(url)
   await native.getByRole('button', { name: /^(Settings|设置|設定)$/ }).first().click({ timeout: 60000 })
@@ -112,10 +116,18 @@ try {
   findings.native.push('Real authenticated context mutation persists and reads back as 500000.')
   await native.screenshot({ path: join(output, 'native-harness-context.png'), fullPage: true })
   assert.deepEqual(findings.consoleErrors, [])
+} catch (error) {
+  if (native && !native.isClosed()) await native.screenshot({ path: join(output, 'native-failure.png'), fullPage: true }).catch(() => {})
+  throw error
 } finally {
   await writeFile(join(output, 'results.json'), JSON.stringify(findings, null, 2))
   await browser?.close()
-  host?.kill('SIGTERM')
+  if (host && host.exitCode === null) {
+    const exited = once(host, 'exit')
+    host.kill('SIGTERM')
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 3000))])
+    if (host.exitCode === null) host.kill('SIGKILL')
+  }
   server?.close()
   await rm(temp, { recursive: true, force: true })
 }
