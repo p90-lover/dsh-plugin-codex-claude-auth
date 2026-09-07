@@ -51,3 +51,15 @@ it('offers keyboard-operable tabs and explains unavailable failover destinations
   fireEvent.keyDown(tab, { key: 'ArrowRight' })
   await waitFor(() => expect(screen.getByRole('tab', { name: '上下文' }).getAttribute('aria-selected')).toBe('true'))
 })
+it('does not offer context writes until the provider is signed in', async () => {
+  const post = vi.fn()
+  start(async (_url, init) => {
+    if (init?.method === 'POST') post()
+    return Response.json({ ...response, connected: false, accounts: [] })
+  })
+  await screen.findAllByText('尚未登入')
+  fireEvent.click(screen.getByRole('tab', { name: '上下文' }))
+  await screen.findByText('請先在「帳號與額度」登入 OpenAI，再調整上下文預算。')
+  expect(screen.queryByRole('button', { name: '套用上下文' })).toBeNull()
+  expect(post).not.toHaveBeenCalled()
+})
