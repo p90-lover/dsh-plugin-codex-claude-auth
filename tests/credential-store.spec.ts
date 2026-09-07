@@ -92,7 +92,7 @@ describe('HarnessOAuthCredentialStore', () => {
 
   it('parses Claude live usage into separate 5-hour and weekly windows', () => {
     const usage = claudeUsage({
-      five_hour: { utilization: 0.3, resets_at: '2030-01-01T01:00:00.000Z' },
+      five_hour: { utilization: 30, resets_at: '2030-01-01T01:00:00.000Z' },
       seven_day: { utilization: 60, resets_at: '2030-01-07T01:00:00.000Z' },
     })
     expect(usage).toMatchObject({

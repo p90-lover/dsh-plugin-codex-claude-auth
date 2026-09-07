@@ -23,12 +23,13 @@ export function latestProviderFromNodes(nodes: readonly unknown[]): ComposerProv
   return undefined
 }
 
-export function remainingPercent(remaining: number | undefined, used: number | undefined): number {
+export function remainingPercent(remaining: number | undefined, used: number | undefined): number | undefined {
   const candidate = Number.isFinite(remaining)
     ? remaining!
     : Number.isFinite(used)
       ? 100 - used!
-      : 100
+      : undefined
+  if (candidate === undefined) return undefined
   return Math.round(Math.max(0, Math.min(100, candidate)))
 }
 

@@ -306,64 +306,59 @@ function materializeModels(
   })
 }
 
-/** Add authenticated provider-owned model discovery with cache/static fallback. */
+/** Provider-owned catalog with effective capacity kept separate from native capability. */
+export interface DiscoveredOAuthProvider extends Provider {
+  nativeModels(): readonly Model<Api>[]
+}
+
+/** Generation-checked discovery; rejected or cancelled publications cannot change the visible catalog. */
 export function autoModelProvider(
   base: Provider,
   catalog: OAuthModelCatalog,
   fetch: Fetch = (input, init) => globalThis.fetch(input, init),
   contextWindowOverride?: () => number | undefined,
-): Provider {
+): DiscoveredOAuthProvider {
   const fallback = [...base.getModels()]
   let models: readonly Model<Api>[] = fallback
-  let inflight: Promise<void> | undefined
-
   const visibleModels = (): readonly Model<Api>[] => {
-    const contextWindow = contextWindowOverride?.()
-    return contextWindow === undefined
-      ? models
-      : models.map(model => ({ ...model, contextWindow }))
+    const selected = contextWindowOverride?.()
+    return selected === undefined ? models : models.map(model => ({
+      ...model,
+      contextWindow: Math.min(selected, model.contextWindow),
+    }))
   }
-
   return {
     ...base,
+    nativeModels: () => models,
     getModels: visibleModels,
-    refreshModels: (context: RefreshModelsContext): Promise<void> => {
-      inflight ??= (async () => {
-        try {
-          const stored = await context.store.read()
-          const cached = stored?.models.filter(model => model.provider === base.id) ?? []
-          if (cached.length > 0) models = cached
-          if (!context.allowNetwork || context.signal?.aborted) return
-          if (context.credential?.type !== 'oauth') return
-          if (!context.force
-            && stored?.checkedAt !== undefined
-            && Date.now() - stored.checkedAt < REFRESH_TTL_MS) return
-
-          const remote = catalog === 'openai-codex'
-            ? await fetchOpenAI(base, context.credential, fetch, stored?.etag, context.signal)
-            : await fetchAnthropic(base, context.credential, fetch, context.signal)
-          if (context.signal?.aborted) return
-          if (remote.notModified) {
-            if (cached.length === 0) throw new Error(`${base.name} returned 304 without a cached model catalog`)
-            await context.store.write({
-              models,
-              checkedAt: Date.now(),
-              ...stored?.etag === undefined ? {} : { etag: stored.etag },
-            })
-            return
-          }
-          if (remote.models === undefined) throw new Error(`${base.name} returned no model catalog`)
-          models = materializeModels(remote.models, fallback, base)
-          await context.store.write({
-            models,
-            checkedAt: Date.now(),
-            ...remote.etag === undefined ? {} : { etag: remote.etag },
-          })
-        } finally {
-          inflight = undefined
-        }
-      })()
-      return inflight
+    refreshModels: async (context: RefreshModelsContext): Promise<void> => {
+      const stored = context.stored
+      const cached = stored?.models.filter(model => model.provider === base.id) ?? []
+      if (context.signal.aborted) return
+      if (cached.length > 0) {
+        const accepted = await context.publish({ update: () => { models = cached } })
+        if (!accepted) return
+      }
+      if (!context.allowNetwork || context.signal.aborted || context.credential?.type !== 'oauth') return
+      if (!context.force && stored?.checkedAt !== undefined && Date.now() - stored.checkedAt < REFRESH_TTL_MS) return
+      const remote = catalog === 'openai-codex'
+        ? await fetchOpenAI(base, context.credential, fetch, stored?.etag, context.signal)
+        : await fetchAnthropic(base, context.credential, fetch, context.signal)
+      if (context.signal.aborted) return
+      if (remote.notModified) {
+        if (cached.length === 0) throw new Error(`${base.name} returned 304 without a cached model catalog`)
+        await context.publish({ persist: {
+          models: [...cached], checkedAt: Date.now(),
+          ...stored?.etag === undefined ? {} : { etag: stored.etag },
+        } })
+        return
+      }
+      if (remote.models === undefined) throw new Error(`${base.name} returned no model catalog`)
+      const next = materializeModels(remote.models, fallback, base)
+      await context.publish({
+        persist: { models: [...next], checkedAt: Date.now(), ...remote.etag === undefined ? {} : { etag: remote.etag } },
+        update: () => { models = next },
+      })
     },
   }
 }

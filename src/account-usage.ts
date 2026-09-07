@@ -1,3 +1,4 @@
+import { publicError } from './public-error.ts'
 import { randomUUID } from 'node:crypto'
 import type { OAuthCredential } from '@earendil-works/pi-ai'
 import type { HarnessOAuthCredentialStore, PublicOAuthAccount } from './credential-store.ts'
@@ -39,7 +40,7 @@ function number(value: unknown): number | undefined {
 function percent(value: unknown): number | undefined {
   const parsed = number(value)
   if (parsed === undefined || parsed < 0) return undefined
-  return Math.min(100, parsed <= 1 ? parsed * 100 : parsed)
+  return Math.min(100, parsed)
 }
 
 function unixSeconds(value: unknown): number | undefined {
@@ -118,6 +119,8 @@ function openAiUsage(payload: unknown): AccountUsage {
 async function fetchOpenAiUsage(credential: OAuthCredential): Promise<AccountUsage> {
   const record = credential as OAuthCredential & { accountId?: string }
   const response = await fetch('https://chatgpt.com/backend-api/wham/usage', {
+    signal: AbortSignal.timeout(15_000),
+    redirect: 'error',
     headers: {
       authorization: `Bearer ${credential.access}`,
       ...(record.accountId === undefined ? {} : { 'chatgpt-account-id': record.accountId }),
@@ -130,6 +133,8 @@ async function fetchOpenAiUsage(credential: OAuthCredential): Promise<AccountUsa
 
 async function fetchClaudeUsage(credential: OAuthCredential): Promise<AccountUsage> {
   const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
+    signal: AbortSignal.timeout(15_000),
+    redirect: 'error',
     headers: {
       authorization: `Bearer ${credential.access}`,
       accept: 'application/json',
@@ -144,6 +149,7 @@ async function fetchClaudeUsage(credential: OAuthCredential): Promise<AccountUsa
 
 export class AccountUsageMonitor {
   private cache: { at: number; value: readonly PublicAccountWithUsage[] } | undefined
+  private generation = 0
 
   constructor(
     private readonly providerId: string,
@@ -154,6 +160,7 @@ export class AccountUsageMonitor {
   async read(force = false): Promise<readonly PublicAccountWithUsage[]> {
     const ttl = this.providerId === 'anthropic' ? 5 * 60_000 : 60_000
     if (!force && this.cache !== undefined && Date.now() - this.cache.at < ttl) return this.cache.value
+    const generation = this.generation
     const entries = await this.store.accountCredentials(this.providerId)
     const value = await Promise.all(entries.map(async ({ account, credential }): Promise<PublicAccountWithUsage> => {
       try {
@@ -164,14 +171,14 @@ export class AccountUsageMonitor {
         })
         return { ...account, usage }
       } catch (error) {
-        return { ...account, usage: { source: 'unavailable', error: error instanceof Error ? error.message : String(error) } }
+        return { ...account, usage: { source: 'unavailable', error: publicError(error) } }
       }
     }))
-    this.cache = { at: Date.now(), value }
+    if (generation === this.generation) this.cache = { at: Date.now(), value }
     return value
   }
 
-  invalidate(): void { this.cache = undefined }
+  invalidate(): void { ++this.generation; this.cache = undefined }
 
   async consumeActiveResetCredit(): Promise<{ label: string } | undefined> {
     if (this.providerId !== 'openai-codex') return undefined
@@ -186,6 +193,8 @@ export class AccountUsageMonitor {
       'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume',
       {
         method: 'POST',
+        signal: AbortSignal.timeout(15_000),
+        redirect: 'error',
         headers: {
           authorization: `Bearer ${active.credential.access}`,
           ...(record.accountId === undefined ? {} : { 'chatgpt-account-id': record.accountId }),

@@ -34,7 +34,7 @@ function success(text: string): StreamChunk[] {
     { type: 'block-start', index: 0, blockType: 'text' },
     { type: 'text-delta', index: 0, text },
     { type: 'block-end', index: 0, block: { type: 'text', text } },
-    { type: 'finish', reason: { kind: 'stop' }, replayState: { kind: 'opaque-target' } },
+    { type: 'finish', reason: { kind: 'stop' }, replayState: { response: { kind: 'opaque-target' } } },
   ]
 }
 
@@ -58,6 +58,7 @@ class FakeAdapter extends LlmAdapter {
 describe('automatic provider failover', () => {
   it('switches account first, then uses the next provider middle model and keeps later turns sticky', async () => {
     const preferences = new FailoverPreferences(backend())
+    await preferences.setProviderEnabled('target', true, ['source', 'target'])
     const targetRequests: GenerateOptions[] = []
     const targetModels = ['target-low', 'target-mid', 'target-high']
     const runtime = {
@@ -108,6 +109,7 @@ describe('automatic provider failover', () => {
 
   it('lets a configured provider model override the automatic middle choice', async () => {
     const preferences = new FailoverPreferences(backend())
+    await preferences.setProviderEnabled('target', true, ['source', 'target'])
     await preferences.setProviderModel('target', 'target-high')
     await expect(preferences.modelFor('target', ['target-low', 'target-mid', 'target-high']))
       .resolves.toBe('target-high')
@@ -115,6 +117,7 @@ describe('automatic provider failover', () => {
 
   it('detects registered and configurable providers and exposes the actual middle-tier default', async () => {
     const preferences = new FailoverPreferences(backend())
+    await preferences.setProviderEnabled('target', true, ['source', 'target'])
     const runtime = {
       listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
       listConfigurableProviders: () => [
