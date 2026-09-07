@@ -1,0 +1,77 @@
+name: Compatibility audit
+on:
+  push:
+    branches: [feat/harness-compat-control-center]
+    paths: [.github/workflows/compatibility-audit.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: [0.1.2-rc.1, 0.1.3-alpha.2]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Prepare isolated dependency probe
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}
+        run: |
+          mkdir -p audit
+          cp package.json audit/original-package.json
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          for (const section of ['devDependencies', 'peerDependencies', 'peerDependenciesMeta']) {
+            delete p[section]?.['@deepseek-ai/dsh-client-runtime'];
+          }
+          for (const section of ['devDependencies', 'peerDependencies']) {
+            for (const key of Object.keys(p[section] ?? {})) {
+              if (key.startsWith('@deepseek-ai/dsh-')) p[section][key] = process.env.DSH_VERSION;
+            }
+          }
+          const modules = ['api-session-controller', 'client-ui-session', 'client-ui-renderer', 'client-ui-chat', 'client-ui-settings-models', 'client-store', 'authorization', 'launch-environment', 'fs', 'attachment', 'tools'];
+          for (const suffix of modules) p.devDependencies['@deepseek-ai/dsh-' + suffix] = process.env.DSH_VERSION;
+          p.peerDependencies['@earendil-works/pi-ai'] = process.env.DSH_VERSION === '0.1.2-rc.1' ? '0.84.2' : '0.85.1';
+          p.devDependencies['@earendil-works/pi-ai'] = p.peerDependencies['@earendil-works/pi-ai'];
+          p.devDependencies['@testing-library/react'] = '16.3.0';
+          p.devDependencies['@testing-library/user-event'] = '14.6.1';
+          p.devDependencies['jsdom'] = '26.1.0';
+          p.devDependencies['react-dom'] = '18.3.1';
+          p.devDependencies['@types/react-dom'] = '18.3.7';
+          p.devDependencies['playwright'] = '1.55.0';
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          JS
+          pnpm install --no-frozen-lockfile
+      - name: Record compatibility and vulnerability evidence
+        shell: bash
+        run: |
+          set +e
+          pnpm run typecheck > audit/typecheck.txt 2>&1
+          echo "typecheck_exit=$?" >> audit/result.txt
+          pnpm audit --prod --json > audit/dependency-audit.json 2>&1
+          echo "dependency_audit_exit=$?" >> audit/result.txt
+          set -e
+          cat audit/result.txt
+          cat audit/typecheck.txt
+      - name: Export public source and isolated test dependencies
+        run: |
+          mkdir -p /tmp/compat-export
+          tar --exclude=.git --exclude=artifacts -czf /tmp/compat-export/workspace.tgz .
+          du -h /tmp/compat-export/workspace.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-audit-${{ matrix.dsh }}
+          path: /tmp/compat-export/workspace.tgz
+          retention-days: 3
