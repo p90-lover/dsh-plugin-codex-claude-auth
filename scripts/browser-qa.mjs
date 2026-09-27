@@ -14,6 +14,7 @@ const output = resolve(process.env.QA_OUTPUT ?? 'aiTemp/artifacts/browser')
 await mkdir(output, { recursive: true })
 const temp = await mkdtemp(join(resolve('aiTemp'), 'dsh-oauth-qa-'))
 let server, host, browser, native
+let bootLog = ''
 const findings = { fixture: [], native: [], consoleErrors: [] }
 try {
   await build({ config: false, entry: { fixture: 'tests/browser/fixture.tsx' }, outDir: join(temp, 'ui'), platform: 'browser', format: 'iife', dts: false, clean: false, deps: { alwaysBundle: [/.*/], onlyBundle: false }, define: { 'process.env.NODE_ENV': JSON.stringify('production') } })
@@ -92,19 +93,22 @@ try {
   } else {
     await symlink(resolve('.'), join(profileModules, 'dsh-oauth-model-providers'), process.platform === 'win32' ? 'junction' : 'dir')
   }
-  let bootLog = ''
   host = spawn(process.execPath, [command, '--profile', 'web', ...(packagePath ? [] : ['--patch', resolve('cordis.patch.yml')]), '--no-open', '--port', '3097'], { env: { ...process.env, DSH_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] })
   host.stdout.on('data', b => { bootLog += String(b) }); host.stderr.on('data', b => { bootLog += String(b) })
   const until = Date.now() + 90000
-  let url
+  let url, unauth
   while (Date.now() < until) {
     url = bootLog.match(/http:\/\/127\.0\.0\.1:3097\/\?token=[^\s]+/)?.[0]
-    if (url) break
+    if (url) {
+      try {
+        unauth = await fetch('http://127.0.0.1:3097/plugins/dsh-oauth-model-providers/oauth/openai-codex-oauth/status', { signal: AbortSignal.timeout(1000) })
+        break
+      } catch { /* Older hosts print the URL before the listener is ready. */ }
+    }
     if (host.exitCode !== null) throw new Error('Isolated Harness boot failed: ' + bootLog.replace(/([?&](?:token|code|state)=)[^\s&]+/gu, '$1[redacted]').slice(-5000))
     await new Promise(r => setTimeout(r, 300))
   }
-  if (!url) throw new Error('Isolated Harness boot timed out.')
-  const unauth = await fetch('http://127.0.0.1:3097/plugins/dsh-oauth-model-providers/oauth/openai-codex-oauth/status', { signal: AbortSignal.timeout(15000) })
+  if (!url || !unauth) throw new Error('Isolated Harness boot timed out.')
   assert.equal(unauth.status, 401)
   findings.native.push('Unauthenticated plugin status returns 401 on the actual native web server.')
   native = await browser.newPage({ viewport: { width: 1440, height: 1080 } })
@@ -151,6 +155,7 @@ try {
   findings.native.push('Real authenticated proxy add, redacted readback, confirmation and removal succeed through the native Settings UI.')
   assert.deepEqual(findings.consoleErrors, [])
 } catch (error) {
+  await writeFile(join(output, 'host-startup.log'), bootLog.replace(/([?&](?:token|code|state)=)[^\\s&]+/gu, '$1[redacted]'))
   if (native && !native.isClosed()) await native.screenshot({ path: join(output, 'native-failure.png'), fullPage: true }).catch(() => {})
   throw error
 } finally {
