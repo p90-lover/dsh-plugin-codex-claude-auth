@@ -8,6 +8,16 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-commands'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dsh-oauth-code-review': {
+      kind: 'dsh-oauth-code-review'
+      form: 'notice'
+      summary: string
+    }
+  }
+}
+
 const execFileAsync = promisify(execFile)
 const REVISION_PATTERN = /^[A-Za-z0-9._/@{}~^:+-]+$/u
 
@@ -214,8 +224,7 @@ export function installCodeReview(ctx: Context): void {
         agent.followup(createUserMessage({
           content: [{ type: 'text', text: buildReviewPrompt(scope, root) }],
           source: {
-            kind: 'plugin',
-            plugin: 'dsh-oauth-model-providers',
+            kind: 'dsh-oauth-code-review',
             form: 'notice',
             summary: `Read-only code review requested: ${scopeLabel(scope)}`,
           },

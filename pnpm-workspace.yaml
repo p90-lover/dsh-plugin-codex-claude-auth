@@ -3,3 +3,7 @@
 # Other dependency install scripts remain disabled.
 onlyBuiltDependencies:
   - fs-ext
+
+# Optional Office binaries are not used by the plugin verification environment.
+ignoredOptionalDependencies:
+  - '@deepseek-ai/libreoffice-kit-*'

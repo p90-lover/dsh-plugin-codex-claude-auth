@@ -1,21 +1,22 @@
 import { chromium } from 'playwright'
 import { build } from 'tsdown'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, mkdir, readFile, writeFile, symlink, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { mkdtemp, mkdir, readFile, writeFile, symlink, rename } from 'node:fs/promises'
+import { basename, dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
 const require = createRequire(import.meta.url)
-const output = resolve(process.env.QA_OUTPUT ?? 'artifacts/browser')
+const execFileAsync = promisify(execFile)
+const output = resolve(process.env.QA_OUTPUT ?? 'aiTemp/artifacts/browser')
 await mkdir(output, { recursive: true })
-const temp = await mkdtemp(join(tmpdir(), 'dsh-oauth-qa-'))
+const temp = await mkdtemp(join(resolve('aiTemp'), 'dsh-oauth-qa-'))
 let server, host, browser, native
 const findings = { fixture: [], native: [], consoleErrors: [] }
 try {
-  await build({ config: false, entry: { fixture: 'tests/browser/fixture.tsx' }, outDir: join(temp, 'ui'), platform: 'browser', format: 'iife', dts: false, clean: true, deps: { alwaysBundle: [/.*/], onlyBundle: false }, define: { 'process.env.NODE_ENV': JSON.stringify('production') } })
+  await build({ config: false, entry: { fixture: 'tests/browser/fixture.tsx' }, outDir: join(temp, 'ui'), platform: 'browser', format: 'iife', dts: false, clean: false, deps: { alwaysBundle: [/.*/], onlyBundle: false }, define: { 'process.env.NODE_ENV': JSON.stringify('production') } })
   server = createServer(async (req, res) => {
     if (req.url === '/fixture.js') { res.setHeader('content-type', 'text/javascript'); res.end(await readFile(join(temp, 'ui', 'fixture.iife.js')).catch(() => readFile(join(temp, 'ui', 'fixture.js')))); return }
     if (req.url === '/favicon.ico') { res.writeHead(204); res.end(); return }
@@ -23,7 +24,7 @@ try {
     res.end('<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>Provider Control Center test fixture</title><style>body{margin:0;background:#f6f8fb;font-family:system-ui,"Noto Sans CJK TC",sans-serif}main{box-sizing:border-box;max-width:1100px;margin:36px auto;padding:28px;background:#fff;border:1px solid #e2e7ef;border-radius:14px}@media(max-width:600px){main{margin:0;padding:16px;border:0;border-radius:0}}</style><main id="root"></main><script src="/fixture.js"></script></html>')
   }).listen(0, '127.0.0.1')
   await once(server, 'listening')
-  browser = await chromium.launch({ headless: true })
+  browser = await chromium.launch({ headless: true, ...(process.env.QA_BROWSER_CHANNEL ? { channel: process.env.QA_BROWSER_CHANNEL } : {}) })
   const page = await browser.newPage({ viewport: { width: 1440, height: 1080 } })
   page.setDefaultTimeout(20000)
   page.on('pageerror', error => findings.consoleErrors.push(error.message))
@@ -79,12 +80,20 @@ try {
   const home = join(temp, 'home')
   const profileModules = join(home, 'profiles', 'web', 'node_modules')
   await mkdir(profileModules, { recursive: true })
-  await symlink(resolve('.'), join(profileModules, 'dsh-oauth-model-providers'), process.platform === 'win32' ? 'junction' : 'dir')
   const cli = require.resolve('@deepseek-ai/dsh/package.json')
-  const cliBin = join(cli.substring(0, cli.lastIndexOf('/')), 'lib', 'bin.js')
+  const cliBin = join(dirname(cli), 'lib', 'bin.js')
   const command = process.env.DSH_CLI_BIN ?? cliBin
+  const packagePath = process.env.QA_PLUGIN_PACKAGE
+  if (packagePath) {
+    await execFileAsync(process.execPath, [command, 'plugin', '--profile', 'web', 'add', resolve(packagePath), '--ignore-scripts', '--store-dir', join(temp, 'store')], {
+      env: { ...process.env, DSH_HOME: home }, windowsHide: true, timeout: 120000,
+    })
+    findings.native.push('Packed release installs with dsh plugin add into a fresh Web profile.')
+  } else {
+    await symlink(resolve('.'), join(profileModules, 'dsh-oauth-model-providers'), process.platform === 'win32' ? 'junction' : 'dir')
+  }
   let bootLog = ''
-  host = spawn(process.execPath, [command, '--profile', 'web', '--patch', resolve('cordis.patch.yml'), '--no-open', '--port', '3097'], { env: { ...process.env, DSH_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] })
+  host = spawn(process.execPath, [command, '--profile', 'web', ...(packagePath ? [] : ['--patch', resolve('cordis.patch.yml')]), '--no-open', '--port', '3097'], { env: { ...process.env, DSH_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] })
   host.stdout.on('data', b => { bootLog += String(b) }); host.stderr.on('data', b => { bootLog += String(b) })
   const until = Date.now() + 90000
   let url
@@ -154,6 +163,7 @@ try {
     if (host.exitCode === null) host.kill('SIGKILL')
   }
   server?.close()
-  await rm(temp, { recursive: true, force: true })
+  await mkdir(resolve('Trash'), { recursive: true })
+  await rename(temp, join(resolve('Trash'), basename(temp)))
 }
 console.log(JSON.stringify(findings, null, 2))

@@ -7,7 +7,7 @@
 <a id="zh"></a>
 ## 繁體中文
 
-### 0.9.0 — 開發分支，待發佈
+### 0.9.0 · 2026-09-28
 
 #### 操作更集中
 
@@ -23,9 +23,11 @@ README 與外掛介面預設使用繁體中文，保留 English 切換。文件�
 
 #### 適配新版 DSH
 
-以 DSH `0.1.2-rc.1` 為基準，並獨立驗證 `0.1.3-alpha.2`。適配新版會話、畫面載入、遠端服務、設定及 pi-ai 認證／模型快照介面。
+以 DSH `0.1.7-rc.2` 為基準，保留 `0.1.2-rc.1` 與 `0.1.3-alpha.2` 的相容性驗證。新版設定、模型資訊與訊息格式已適配，程式碼審查仍可辨認剛完成的 Codex 回合。
 
-這兩個 DSH 版本仍是預發佈版本。上游變動檢查只偵測提交和版本差異，不能當作「最新 master 已通過完整測試」。
+重新整理模型後，新的目錄會同步至模型選擇器；連續帳號更新不再留下舊狀態。已儲存的備援模型下架時，會沿用有效的提供者預設值，推理強度仍可調整。
+
+上述 DSH 版本仍是預發佈版本。上游變動檢查只偵測提交和版本差異，不能當作「最新 master 已通過完整測試」。
 
 #### 加強資料與操作保護
 
@@ -54,7 +56,7 @@ README 與外掛介面預設使用繁體中文，保留 English 切換。文件�
 
 [繁體中文](#zh) | **English** · [User guide](README.en.md)
 
-### 0.9.0 — development branch, not yet released
+### 0.9.0 · 2026-09-28
 
 #### One place for routine management
 
@@ -70,9 +72,11 @@ The Claude composer does not display OpenAI context controls. Proxies can be man
 
 #### Newer DSH integration
 
-The baseline is DSH `0.1.2-rc.1`, with independent verification of `0.1.3-alpha.2`. Integration uses the newer session, rendering, remote-service, settings, and pi-ai authentication/model-snapshot interfaces.
+The baseline is DSH `0.1.7-rc.2`, with compatibility checks retained for `0.1.2-rc.1` and `0.1.3-alpha.2`. Settings, model metadata, and message formats follow the newer host APIs, and code review continues to recognize completed Codex turns.
 
-Both DSH versions remain prereleases. Upstream drift detection reports commit/version changes; it is not evidence that the latest master has passed full compatibility tests.
+Refreshing models updates the model picker, and consecutive account updates no longer leave stale status. When a saved fallback model disappears, a valid provider default is used and reasoning effort remains editable.
+
+These DSH versions remain prereleases. Upstream drift detection reports commit/version changes; it is not evidence that the latest master has passed full compatibility tests.
 
 #### Data and operation safeguards
 

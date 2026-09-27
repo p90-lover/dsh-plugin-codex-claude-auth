@@ -76,7 +76,10 @@ function AccountAdvanced({ service, id, account, status }: { service: ProviderSe
   const { text } = useLanguage()
   const action = useAction()
   const entry = status.failover.providers.find(item => item.id === PROVIDERS.find(p => p.id === id)!.route)
-  const selectedModel = entry?.models.find(model => model.id === (account.failoverModel ?? entry.model ?? entry.defaultModel))
+  const configuredModel = entry?.models.find(model => model.id === account.failoverModel)
+  const selectedModel = configuredModel
+    ?? entry?.models.find(model => model.id === entry.model)
+    ?? entry?.models.find(model => model.id === entry.defaultModel)
   const save = (path: string, body: object): void => { void action.run(() => service.mutate(id, path, { accountId: account.id, ...body }), text('帳號設定已儲存。', 'Account settings saved.')) }
   return <details><summary>{text('此帳號的進階設定', 'Advanced settings for this account')}</summary>
     <div className="o-stack">
@@ -85,7 +88,7 @@ function AccountAdvanced({ service, id, account, status }: { service: ProviderSe
         {status.proxy.entries.map(proxy => <option key={proxy.id} value={proxy.id}>{proxy.label} · {proxy.display}</option>)}
       </select></label>
       {entry ? <div className="o-fields">
-        <label className="o-field">{text('備援模型', 'Fallback model')}<select value={account.failoverModel ?? ''} disabled={action.pending || !entry.available} onChange={event => { save('/account/failover-model', { modelId: event.target.value || null }) }}>
+        <label className="o-field">{text('備援模型', 'Fallback model')}<select value={configuredModel?.id ?? ''} disabled={action.pending || !entry.available} onChange={event => { save('/account/failover-model', { modelId: event.target.value || null }) }}>
           <option value="">{text('繼承提供者設定', 'Inherit provider settings')}</option>{entry.models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
         </select></label>
         <label className="o-field">{text('備援推理強度', 'Fallback reasoning effort')}<select value={selectedModel?.efforts.some(e => e.id === account.failoverEffort) ? account.failoverEffort : ''} disabled={action.pending || !selectedModel?.efforts.length} onChange={event => { save('/account/failover-effort', { effortId: event.target.value || null }) }}>

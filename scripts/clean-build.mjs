@@ -1,4 +1,9 @@
-import { rmSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-// Only compiler output; never source, credentials, or user workspaces.
-rmSync(fileURLToPath(new URL('../lib/', import.meta.url)), { recursive: true, force: true })
+// Keep previous compiler output recoverable while building a fresh package.
+const output = fileURLToPath(new URL('../lib/', import.meta.url))
+if (existsSync(output)) {
+  const backup = fileURLToPath(new URL(`../Trash/build-${Date.now()}/`, import.meta.url))
+  mkdirSync(backup, { recursive: true })
+  renameSync(output, `${backup}/lib`)
+}

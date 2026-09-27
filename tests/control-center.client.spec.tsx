@@ -63,3 +63,48 @@ it('does not offer context writes until the provider is signed in', async () => 
   expect(screen.queryByRole('button', { name: '套用上下文' })).toBeNull()
   expect(post).not.toHaveBeenCalled()
 })
+
+it('preserves a handoff draft across internal tabs without exposing hidden controls', async () => {
+  const service = start()
+  await screen.findAllByText('Test account')
+  fireEvent.click(screen.getByRole('tab', { name: '工作交接' }))
+  const fields = [
+    ['任務目標', 'Finish the provider upgrade'],
+    ['已完成的工作與重要決定', 'Compatibility checks passed; release is pending.'],
+    ['下一步（每行一項）', 'Verify the release package'],
+    ['專案相對路徑（每行一項）', 'src/client/index.tsx'],
+  ] as const
+  for (const [name, value] of fields) fireEvent.change(screen.getByRole('textbox', { name }), { target: { value } })
+  fireEvent.click(screen.getByRole('tab', { name: '帳號與額度' }))
+  expect(screen.queryByRole('textbox', { name: '任務目標' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '匯出可讀摘要' })).toBeNull()
+  expect(screen.getAllByRole('tabpanel')).toHaveLength(1)
+  fireEvent.click(screen.getByRole('tab', { name: '工作交接' }))
+  for (const [name, value] of fields) expect((screen.getByRole('textbox', { name }) as HTMLInputElement).value).toBe(value)
+  expect(screen.getAllByRole('tabpanel')).toHaveLength(1)
+  service.dispose()
+})
+
+const staleFallbackResponse = {
+  ...response,
+  accounts: response.accounts.map(account => ({ ...account, failoverModel: 'retired-model' })),
+  failover: { providers: [{
+    id: 'openai-codex-oauth', name: 'OpenAI Codex', available: true, enabled: true,
+    model: 'retired-model', defaultModel: 'current-model',
+    models: [{ id: 'current-model', name: 'Current model', efforts: [{ id: 'high', name: 'High' }], defaultEffort: 'high' }],
+  }] },
+}
+it.each([
+  { scope: 'account', tab: '帳號與額度', model: '備援模型', effort: '備援推理強度' },
+  { scope: 'provider', tab: '自動備援', model: '目的模型', effort: '推理強度' },
+])('keeps $scope effort controls usable after a saved model leaves the catalog', async ({ tab, model, effort }) => {
+  const service = start(async () => Response.json(staleFallbackResponse))
+  await screen.findAllByText('Test account')
+  fireEvent.click(screen.getByRole('tab', { name: tab }))
+  const modelSelect = screen.getByLabelText(model) as HTMLSelectElement
+  const effortSelect = screen.getByLabelText(effort) as HTMLSelectElement
+  expect(modelSelect.value).toBe('')
+  expect(effortSelect.disabled).toBe(false)
+  expect([...effortSelect.options].map(option => option.value)).toContain('high')
+  service.dispose()
+})

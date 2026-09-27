@@ -30,8 +30,11 @@ export function ControlCenter({ service }: { service: ProviderService }): ReactN
         if (next !== undefined) { event.preventDefault(); setTab(next); buttons.current[next]?.focus() }
       }}>{text(zh, en)}</button>)}
     </div>
-    <div role="tabpanel" id={`${identity}-panel-${tab}`} aria-labelledby={`${identity}-tab-${tab}`}>
-      {tab === 0 ? <div className="o-grid"><ProviderPanel service={service} id="codex" /><ProviderPanel service={service} id="claude" /></div> : tab === 1 ? <ContextPanel service={service} /> : tab === 2 ? <ProxyPanel service={service} /> : tab === 3 ? <FailoverPanel service={service} /> : tab === 4 ? <DiagnosticsPanel service={service} /> : <HandoffPanel />}
+    {tab !== 5 ? <div role="tabpanel" id={`${identity}-panel-${tab}`} aria-labelledby={`${identity}-tab-${tab}`}>
+      {tab === 0 ? <div className="o-grid"><ProviderPanel service={service} id="codex" /><ProviderPanel service={service} id="claude" /></div> : tab === 1 ? <ContextPanel service={service} /> : tab === 2 ? <ProxyPanel service={service} /> : tab === 3 ? <FailoverPanel service={service} /> : <DiagnosticsPanel service={service} />}
+    </div> : null}
+    <div role="tabpanel" id={`${identity}-panel-5`} aria-labelledby={`${identity}-tab-5`} hidden={tab !== 5}>
+      <HandoffPanel />
     </div>
     <Notice notice={action.notice} />
     <footer className="o-footer">{text('憑證留在本機 Harness。未知額度不會顯示成 100%，設定只在宿主確認後標示成功。', 'Credentials stay in the local Harness. Unknown quota is never shown as 100%; changes are confirmed only after the host acknowledges them.')}</footer>

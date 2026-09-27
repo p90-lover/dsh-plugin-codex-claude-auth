@@ -8,18 +8,18 @@ This is a DSH plugin, not a separate Harness installation or a standalone deskto
 
 [Get started](#quickstart) · [Use each feature](#features) · [Switch work environments](#handoff) · [Troubleshooting](#troubleshooting) · [Safety](SECURITY.md#en) · [Changelog](CHANGELOG.md#en)
 
-> **These instructions describe 0.9.0 on the development branch.** Branch code and CI artifacts are not published releases. Check the files actually available in this repository's [Releases](https://github.com/p90-lover/dsh-plugin-codex-claude-auth/releases). When a 0.9.0 package is unavailable, use the source-build instructions below; do not rename an older package.
+> **0.9.0 supports DSH 0.1.7-rc.2.** Download the package and SHA256 file from this repository's [Releases](https://github.com/p90-lover/dsh-plugin-codex-claude-auth/releases), or follow the source-build instructions below.
 
 ## Check compatibility first
 
 | Component | Scope of this update |
 | --- | --- |
-| Plugin | `0.9.0` on this branch |
-| Baseline DSH | `0.1.2-rc.1` |
-| Separately verified DSH | `0.1.3-alpha.2` |
+| Plugin | `0.9.0` |
+| Baseline DSH | `0.1.7-rc.2` |
+| Separately verified DSH | `0.1.2-rc.1`, `0.1.3-alpha.2` |
 | Node.js | `^22.19.0 \|\| >=24.0.0`; this project's CI uses Node 24 |
 
-Both `rc` and `alpha` versions are prereleases, not stable releases. **Support for these two versions does not establish support for every newer version or arbitrary `master` commit.** Read the [official release notes](https://github.com/deepseek-ai/deepseek-harness/releases) before upgrading.
+Both `rc` and `alpha` versions are prereleases, not stable releases. **Support for these versions does not establish support for every newer version or arbitrary `master` commit.** Read the [official release notes](https://github.com/deepseek-ai/deepseek-harness/releases) before upgrading.
 
 <a id="quickstart"></a>
 ## Get started
@@ -36,7 +36,7 @@ dsh --version
 For a new installation, use this project's baseline:
 
 ```powershell
-npm install --global @deepseek-ai/dsh@0.1.2-rc.1
+npm install --global @deepseek-ai/dsh@0.1.7-rc.2
 dsh web
 ```
 

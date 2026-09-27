@@ -115,6 +115,7 @@ export function applyOAuthProvider(
     retryPolicy: config.retryPolicy,
     piProvider: routeProvider,
     configuredMaxTokens: new Map(),
+    ...{ modelErrors: new Map<string, string>() },
     maxRequestImageBytes: 20 * 1024 * 1024,
     requestImagePixelBudget: 2048 * 2048,
     requestImageMaxBytes: 1024 * 1024,
@@ -198,12 +199,7 @@ export function applyOAuthProvider(
     settingsNs,
     settingsPath: [],
   }
-  ctx.inject(['settings'], settingsCtx => {
-    settingsCtx.settings.installSection(ctx, settingsNs, DIRECTORY_SETTINGS_SCHEMA, {}, {
-      setSource: () => undefined,
-      onChange: () => undefined,
-    })
-  })
+  let directorySupported = false
 
   let availabilityRevision = 0
   let routeAvailable = false
@@ -211,26 +207,49 @@ export function applyOAuthProvider(
   let directory: DirectoryRegistrationHandle | undefined
   const setAvailable = (available: boolean): void => {
     failover.adapter.setAvailable(config.route, available)
-    if (routeAvailable === available && directoryAvailable === available) return
+    const showDirectory = available && directorySupported
+    if (routeAvailable === available && directoryAvailable === showDirectory) return
     availabilityRevision += 1
     if (routeAvailable !== available) {
       registration.replace(available ? [config.route] : [])
       routeAvailable = available
     }
-    if (directoryAvailable === available) return
+    if (directoryAvailable === showDirectory) return
     try {
       if (directory === undefined) {
-        if (!available) return
+        if (!showDirectory) return
         directory = ctx.llm.registerConfigurableProviders([directoryEntry])
       } else {
-        directory.replace(available ? [directoryEntry] : [])
+        directory.replace(showDirectory ? [directoryEntry] : [])
       }
-      directoryAvailable = available
+      directoryAvailable = showDirectory
     } catch (error) {
-      ctx.logger.warn(`oauth-model-provider: could not ${available ? 'publish' : 'hide'} ${config.displayName} in the Models provider directory`)
+      ctx.logger.warn(`oauth-model-provider: could not ${showDirectory ? 'publish' : 'hide'} ${config.displayName} in the Models provider directory`)
       ctx.logger.warn(error)
     }
   }
+
+  ctx.inject(['settings'], settingsCtx => {
+    const settings = settingsCtx.settings as unknown as {
+      installSection?: (owner: Context, ns: string, schema: typeof DIRECTORY_SETTINGS_SCHEMA, source: object,
+        hooks: { setSource(): void; onChange(): void }) => void
+      configure?: (presentation: { auto: boolean }, owner: Context['fiber']) => () => void
+    }
+    settingsCtx.effect(() => {
+      if (settings.installSection !== undefined) {
+        settings.installSection(ctx, settingsNs, DIRECTORY_SETTINGS_SCHEMA, {}, {
+          setSource: () => undefined,
+          onChange: () => undefined,
+        })
+        directorySupported = true
+        setAvailable(routeAvailable)
+        return () => { directorySupported = false; setAvailable(routeAvailable) }
+      }
+      // Current hosts derive forms from live Config fields. OAuth settings live
+      // in the control center, so no synthetic generic Models row is registered.
+      return settings.configure?.({ auto: false }, ctx.fiber) ?? (() => {})
+    })
+  })
 
   const catalogFingerprint = async (): Promise<string> => JSON.stringify(provider.getModels())
 

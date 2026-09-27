@@ -15,7 +15,7 @@ const descriptors = await Promise.all(contracts.map(async path => {
   return { path, sha: file.sha }
 }))
 const report = { checkedAt: new Date().toISOString(), master: branch.commit.sha, latestRelease: releases[0]?.tag_name, contracts: descriptors, scope: 'metadata/contract drift only; runtime verification uses pinned published packages' }
-mkdirSync('artifacts', { recursive: true })
-writeFileSync('artifacts/upstream-canary.json', JSON.stringify(report, null, 2))
+mkdirSync('aiTemp/artifacts', { recursive: true })
+writeFileSync('aiTemp/artifacts/upstream-canary.json', JSON.stringify(report, null, 2))
 console.log(JSON.stringify(report, null, 2))
-if (!['dsh-v0.1.2-rc.1', 'dsh-v0.1.3-alpha.2'].includes(report.latestRelease)) throw new Error('New unverified upstream release: compatibility review required before upgrading.')
+if (!['dsh-v0.1.2-rc.1', 'dsh-v0.1.3-alpha.2', 'dsh-v0.1.7-rc.2'].includes(report.latestRelease)) throw new Error('New unverified upstream release: compatibility review required before upgrading.')

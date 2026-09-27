@@ -1,4 +1,4 @@
-import { LlmAdapter } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, MessageId } from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions,
   LlmModelInfo,
@@ -89,7 +89,7 @@ describe('automatic provider failover', () => {
       model: 'source-low',
       sessionId: 'session-1' as GenerateOptions['sessionId'],
       messages: [{
-        id: 'assistant-1', role: 'assistant', content: [{ type: 'text', text: 'old' }],
+        id: MessageId('assistant-1'), role: 'assistant', content: [{ type: 'text', text: 'old' }],
         source: { kind: 'model', provider: 'source', model: 'source-low', replayState: oldReplay },
       }],
     } as GenerateOptions

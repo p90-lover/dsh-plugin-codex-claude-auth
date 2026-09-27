@@ -6,7 +6,6 @@ import type {
   LlmModelInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
-  Message,
   ResolvedRetryPolicy,
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
@@ -292,9 +291,9 @@ class AttemptFailure extends Error {
   }
 }
 
-function withoutForeignReplay(messages: Message[], provider: string, model: string): Message[] {
+function withoutForeignReplay(messages: GenerateOptions['messages'], provider: string, model: string): GenerateOptions['messages'] {
   let changed = false
-  const projected = messages.map((message): Message => {
+  const projected = messages.map((message): GenerateOptions['messages'][number] => {
     if (message.role !== 'assistant' || message.source.kind !== 'model' || message.source.replayState === undefined) {
       return message
     }
@@ -303,7 +302,7 @@ function withoutForeignReplay(messages: Message[], provider: string, model: stri
     return {
       ...message,
       source: {
-        kind: 'model',
+        kind: 'model' as const,
         provider: message.source.provider,
         model: message.source.model,
       },

@@ -4,7 +4,6 @@ import type {
   LlmModelInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
-  Message,
   PreparedAdapterCall,
   LlmImageRequestPricing,
   ResolvedRetryPolicy,
@@ -50,12 +49,12 @@ export function withHighestReasoningDefault(info: LlmResolvedModelInfo): LlmReso
 
 /** Repair replay metadata written by releases before routed stream identity was normalized. */
 export function repairLegacyReplayMessages(
-  messages: Message[],
+  messages: GenerateOptions['messages'],
   route: string,
   upstreamProvider: string,
-): Message[] {
+): GenerateOptions['messages'] {
   let changed = false
-  const repaired = messages.map((message): Message => {
+  const repaired = messages.map((message): GenerateOptions['messages'][number] => {
     if (message.role !== 'assistant' || message.source.kind !== 'model') return message
     const state = record(message.source.replayState)
     if (state?.kind !== 'pi-ai'

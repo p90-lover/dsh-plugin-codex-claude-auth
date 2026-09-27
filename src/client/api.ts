@@ -29,6 +29,7 @@ export class ProviderService {
   private revisions: Record<ProviderId, number> = { codex: 0, claude: 0 }
   private reads = new Map<ProviderId, Promise<void>>()
   private queued = new Map<ProviderId, Promise<void>>()
+  private invalidated = new Set<ProviderId>()
   private listeners = new Set<() => void>()
   private abort = new AbortController()
   private disposed = false
@@ -60,7 +61,11 @@ export class ProviderService {
     return value
   }
   async load(id: ProviderId, force = false): Promise<void> {
-    if (this.disposed || this.states[id].busy) return
+    if (this.disposed) return
+    if (this.states[id].busy) {
+      if (force) this.invalidated.add(id)
+      return
+    }
     if (!force && this.states[id].data && Date.now() - (this.states[id].updatedAt ?? 0) < 5000) return
     const running = this.reads.get(id)
     if (running) {
@@ -68,7 +73,10 @@ export class ProviderService {
       const queued = this.queued.get(id)
       if (queued) return queued
       ++this.revisions[id]
-      const refresh = running.then(() => this.load(id, true))
+      const refresh = running.then(() => {
+        if (this.queued.get(id) === refresh) this.queued.delete(id)
+        return this.load(id, true)
+      })
       this.queued.set(id, refresh)
       try { await refresh } finally { if (this.queued.get(id) === refresh) this.queued.delete(id) }
       return
@@ -103,6 +111,8 @@ export class ProviderService {
     } catch (error) {
       this.publish(id, { ...this.states[id], busy: false, loading: false })
       throw new Error(publicError(error))
+    } finally {
+      if (this.invalidated.delete(id)) await this.load(id, true)
     }
   }
   async flow(id: ProviderId, action: string, body?: object): Promise<FlowState> {

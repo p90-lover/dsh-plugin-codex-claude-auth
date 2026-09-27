@@ -8,18 +8,18 @@
 
 [快速開始](#quickstart) · [功能操作](#features) · [切換工作環境](#handoff) · [問題排解](#troubleshooting) · [安全說明](SECURITY.md#zh) · [更新紀錄](CHANGELOG.md#zh)
 
-> **目前文件對應開發分支的 0.9.0。** 分支上的程式碼與測試產物不等於已發佈版本。請以本倉庫 [Releases](https://github.com/p90-lover/dsh-plugin-codex-claude-auth/releases) 實際列出的檔案為準；沒有 0.9.0 安裝包時，請勿把舊包改名，改用下方的原始碼建置方式。
+> **0.9.0 適配 DSH 0.1.7-rc.2。** 安裝包與 SHA256 校驗檔請從本倉庫 [Releases](https://github.com/p90-lover/dsh-plugin-codex-claude-auth/releases) 下載；原始碼建置方式見下方。
 
 ## 開始前，先確認版本
 
 | 項目 | 本次適配範圍 |
 | --- | --- |
-| 外掛 | 本分支 `0.9.0` |
-| DSH 基準版本 | `0.1.2-rc.1` |
-| 另外驗證的 DSH 版本 | `0.1.3-alpha.2` |
+| 外掛 | `0.9.0` |
+| DSH 基準版本 | `0.1.7-rc.2` |
+| 另外驗證的 DSH 版本 | `0.1.2-rc.1`、`0.1.3-alpha.2` |
 | Node.js | `^22.19.0 \|\| >=24.0.0`；本專案 CI 使用 Node 24 |
 
-`rc`、`alpha` 都是預發佈版本，並非穩定版。**支援上述兩個版本，不代表支援所有更新版本或任意 `master` 提交。** 升級前先看[官方更新紀錄](https://github.com/deepseek-ai/deepseek-harness/releases)。
+`rc`、`alpha` 都是預發佈版本，並非穩定版。**支援上述版本，不代表支援所有更新版本或任意 `master` 提交。** 升級前先看[官方更新紀錄](https://github.com/deepseek-ai/deepseek-harness/releases)。
 
 <a id="quickstart"></a>
 ## 快速開始
@@ -36,7 +36,7 @@ dsh --version
 全新安裝可使用本專案的基準版本：
 
 ```powershell
-npm install --global @deepseek-ai/dsh@0.1.2-rc.1
+npm install --global @deepseek-ai/dsh@0.1.7-rc.2
 dsh web
 ```
 

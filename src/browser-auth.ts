@@ -343,7 +343,7 @@ export class BrowserOAuthController {
     private readonly providerName: string,
     private readonly setAvailable: (available: boolean) => void,
     private readonly contextWindow?: OpenAIContextWindowPreference,
-    private readonly publishContextWindow?: () => Promise<void>,
+    private readonly publishModels?: () => Promise<void>,
     private readonly failover?: FailoverPreferences,
     private readonly failoverRuntime?: FailoverRuntime,
     private readonly availableFailoverRoutes?: () => ReadonlySet<string>,
@@ -380,7 +380,8 @@ export class BrowserOAuthController {
     const finishEnrollment = this.store.beginEnrollment(this.authProviderId)
     flow.start(async interaction => {
       try {
-      await this.models.login(this.authProviderId, 'oauth', interaction)
+        await this.models.login(this.authProviderId, 'oauth', interaction)
+        await this.publishModels?.()
         this.usage.invalidate()
         this.setAvailable(true)
       } finally {
@@ -442,6 +443,7 @@ export class BrowserOAuthController {
     }
     await this.models.getAuth(this.authProviderId)
     await this.models.refresh({ allowNetwork: true, force: true })
+    await this.publishModels?.()
     this.setAvailable(true)
     return this.status()
   }
@@ -454,6 +456,7 @@ export class BrowserOAuthController {
     this.proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
     this.usage.invalidate()
     await this.models.refresh({ allowNetwork: true, force: true })
+    await this.publishModels?.()
     this.setAvailable(true)
     return this.status()
   }
@@ -512,7 +515,7 @@ export class BrowserOAuthController {
       throw new HttpError(400, 'Context-window selection is available only for OpenAI Codex.')
     }
     await this.contextWindow.set(value)
-    await this.publishContextWindow?.()
+    await this.publishModels?.()
     return this.status()
   }
 
@@ -561,7 +564,10 @@ export class BrowserOAuthController {
     }
     if (effortId === undefined) return
     const models = await this.failoverRuntime.listModels(providerId)
-    const model = accountModel ?? await this.failover.modelFor(providerId, models.map(item => item.id))
+    const ids = models.map(item => item.id)
+    const model = accountModel !== undefined && ids.includes(accountModel)
+      ? accountModel
+      : await this.failover.modelFor(providerId, ids)
     const info = model === undefined ? undefined : await this.failoverRuntime.resolveModel?.(providerId, model)
     if (!info?.reasoning?.efforts.some(effort => String(effort.id) === effortId)) {
       throw new HttpError(400, 'This reasoning effort is not supported by the selected fallback model.')
@@ -612,7 +618,7 @@ export function installBrowserOAuth(
   route: string,
   setAvailable: (available: boolean) => void,
   contextWindow?: OpenAIContextWindowPreference,
-  publishContextWindow?: () => Promise<void>,
+  publishModels?: () => Promise<void>,
   failover?: FailoverPreferences,
   failoverRuntime?: FailoverRuntime,
   availableFailoverRoutes?: () => ReadonlySet<string>,
@@ -629,7 +635,7 @@ export function installBrowserOAuth(
       providerName,
       setAvailable,
       contextWindow,
-      publishContextWindow,
+      publishModels,
       failover,
       failoverRuntime,
       availableFailoverRoutes,

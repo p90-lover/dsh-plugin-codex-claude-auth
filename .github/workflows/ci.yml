@@ -1,7 +1,8 @@
 name: Verify plugin
 on:
   push:
-    branches: [main, master, feat/harness-compat-control-center]
+    branches: [main, feat/harness-compat-control-center]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
   schedule:
@@ -19,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dsh: [0.1.2-rc.1, 0.1.3-alpha.2]
+        dsh: [0.1.2-rc.1, 0.1.3-alpha.2, 0.1.7-rc.2]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,44 +33,47 @@ jobs:
           node-version: 24
           cache: pnpm
       - name: Install reproducible baseline dependencies
-        if: matrix.dsh == '0.1.2-rc.1'
+        if: matrix.dsh == '0.1.7-rc.2'
         run: pnpm install --frozen-lockfile
-      - name: Install independently resolved newer Harness
-        if: matrix.dsh != '0.1.2-rc.1'
+      - name: Install independently resolved additional Harness
+        if: matrix.dsh != '0.1.7-rc.2'
         run: |
           node scripts/use-harness.mjs '${{ matrix.dsh }}'
-          rm pnpm-lock.yaml
+          mkdir -p aiTemp
+          mv pnpm-lock.yaml aiTemp/pnpm-lock.baseline.yaml
           pnpm install --no-frozen-lockfile
       - name: Typecheck, all regression tests, clean production build
         run: pnpm run check
       - name: Audit the plugin production dependency graph
         run: |
-          mkdir -p artifacts
-          pnpm audit --prod --json > artifacts/production-audit.json
+          mkdir -p aiTemp/artifacts
+          pnpm audit --prod --json > aiTemp/artifacts/production-audit.json
       - name: Prepare browser verification
         run: |
           pnpm exec playwright install --with-deps chromium
           sudo apt-get update -qq
           sudo apt-get install -y fonts-noto-cjk
-      - name: Test rendered controls and actual Harness integration
-        run: pnpm run test:browser
       - name: Package verified plugin
         run: |
-          mkdir -p artifacts/package
-          pnpm pack --pack-destination artifacts/package
-          cd artifacts/package
+          mkdir -p aiTemp/artifacts/package
+          pnpm pack --pack-destination aiTemp/artifacts/package
+          cd aiTemp/artifacts/package
           sha256sum *.tgz > SHA256SUMS
+      - name: Test rendered controls and installed release package
+        run: |
+          export QA_PLUGIN_PACKAGE="aiTemp/artifacts/package/dsh-oauth-model-providers-$(node -p 'require("./package.json").version').tgz"
+          pnpm run test:browser
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: verification-${{ matrix.dsh }}
-          path: artifacts/
+          path: aiTemp/artifacts/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: success() && matrix.dsh == '0.1.2-rc.1'
+        if: success() && matrix.dsh == '0.1.7-rc.2'
         with:
           name: release-package
-          path: artifacts/package/
+          path: aiTemp/artifacts/package/
           if-no-files-found: error
   upstream-canary:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -90,9 +94,9 @@ jobs:
         if: always()
         with:
           name: upstream-canary
-          path: artifacts/upstream-canary.json
+          path: aiTemp/artifacts/upstream-canary.json
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: check
     runs-on: ubuntu-latest
     permissions:
@@ -104,21 +108,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: release-package
-          path: release-assets
-      - name: Publish immutable versioned package and historical snapshot
+          path: aiTemp/release-assets
+      - name: Publish verified versioned package
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           version="$(node -p 'JSON.parse(require("fs").readFileSync("package.json","utf8")).version')"
-          test "$version" = '0.9.0'
-          cd release-assets && sha256sum -c SHA256SUMS && cd ..
+          test "$GITHUB_REF_NAME" = "v$version"
+          (cd aiTemp/release-assets && sha256sum -c SHA256SUMS)
           if gh release view "v$version" >/dev/null 2>&1; then
             echo 'Release already exists; refusing to overwrite a published release.'
             exit 1
           fi
-          gh release create "v$version" release-assets/* --target "$GITHUB_SHA" --title "v$version · 模型與帳號控制中心" --notes-file CHANGELOG.md --latest
-          if ! gh release view v0.0.1 >/dev/null 2>&1; then
-            gh release create v0.0.1 --target 95edb9ea7a1250e4e21faf06bbf787bdcc29988f --title 'v0.0.1 · 歷史快照 / legacy archive' --prerelease --notes '依使用者要求保留的歷史快照。指向原始 0.8.0 commit，不重寫歷史或更改舊 package.json。只供回溯，不適用於新版 DSH；包含後續版本已修正的問題，請安裝 v0.9.0。 Historical source-only archive of the original 0.8.0 commit; not recommended for deployment.'
-          fi
+          gh release create "v$version" aiTemp/release-assets/* --target "$GITHUB_SHA" --title "v$version · 模型與帳號控制中心" --notes-file CHANGELOG.md --latest

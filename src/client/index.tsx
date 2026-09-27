@@ -39,7 +39,7 @@ export function apply(ctx: ClientContext): void {
       inject: () => ({ service }),
     }, () => <div className="dsh-oauth"><style>{styles}</style><ProviderPanel service={service} id={provider.id} /></div>))
   }
-  ctx.inject(['modelDirectories', 'sessions'], scope => {
+  ctx.inject(['modelDirectories', 'sessions', 'remote.session'], scope => {
     // The browser owns this service; Host and Client share a compilation unit here.
     const sessions = scope.get('sessions') as unknown as ISessions
     scope.slots.inject('conversation.composer.dock', () => scope.slots.register({
