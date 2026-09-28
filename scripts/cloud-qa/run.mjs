@@ -319,6 +319,7 @@ try {
     if (codexChat) await check('Native Code review command queues a model turn', async () => {
       await page.getByRole('button', { name: 'Start review', exact: true }).click()
       await page.getByText(/Code review started for/).first().waitFor()
+      await poll(async () => (await readFile(join(output, 'provider-wire.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)), lines => lines.some(line => line.kind === 'codex-inference' && line.review === true))
       await poll(() => page.getByText('CLOUD_QA_RESPONSE_OK', { exact: true }).count(), count => count >= 2)
       await capture('native-code-review')
     })

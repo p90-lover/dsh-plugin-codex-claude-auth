@@ -1,4 +1,5 @@
 import { appendFileSync } from 'node:fs'
+import { gunzipSync } from 'node:zlib'
 import { LlmRuntime } from '@deepseek-ai/dsh-llm'
 if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('This test fixture only runs in hosted CI.')
 const realFetch = globalThis.fetch
@@ -8,7 +9,13 @@ const note = (kind, extra = {}) => { if (log) appendFileSync(log, JSON.stringify
 note('native-llm-contract', { resolveModel: typeof LlmRuntime.prototype.resolveModel, resolveModelInfo: typeof LlmRuntime.prototype.resolveModelInfo })
 const json = value => Response.json(value)
 const jwt = value => Buffer.from('{}').toString('base64url') + '.' + Buffer.from(JSON.stringify(value)).toString('base64url') + '.qa-signature'
-const stream = events => new Response(events.map(event => 'data: ' + JSON.stringify(event) + '\n\n').join(''), { headers: { 'content-type': 'text/event-stream' } })
+const stream = events => new Response(events.map(event => 'event: ' + event.type + '\ndata: ' + JSON.stringify(event) + '\n\n').join(''), { headers: { 'content-type': 'text/event-stream' } })
+async function requestBody(input, init) {
+  const raw = init?.body ?? (input instanceof Request ? await input.clone().arrayBuffer() : '{}')
+  let bytes = Buffer.from(raw)
+  if (bytes[0] === 31 && bytes[1] === 139) bytes = gunzipSync(bytes)
+  return JSON.parse(bytes.toString('utf8'))
+}
 globalThis.fetch = async (input, init) => {
   const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url)
   if (['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return realFetch(input, init)
@@ -39,8 +46,8 @@ globalThis.fetch = async (input, init) => {
     return json({ five_hour: { utilization: 18, resets_at: '2033-05-18T03:33:20Z' }, seven_day: { utilization: 35, resets_at: '2033-05-20T03:33:20Z' } })
   }
   if (url.hostname === 'chatgpt.com' && url.pathname.endsWith('/responses')) {
-    const body = JSON.parse(String(init?.body ?? '{}'))
-    note('codex-inference', { model: body.model, effort: body.reasoning?.effort, tools: body.tools?.length ?? 0 })
+    const body = await requestBody(input, init)
+    note('codex-inference', { model: body.model, effort: body.reasoning?.effort, tools: body.tools?.length ?? 0, review: JSON.stringify(body.input).includes('dedicated read-only code review') })
     const output = { type: 'message', id: 'msg_qa', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'CLOUD_QA_RESPONSE_OK', annotations: [] }] }
     return stream([
       { type: 'response.created', response: { id: 'resp_qa', status: 'in_progress', output: [] } },
@@ -54,7 +61,7 @@ globalThis.fetch = async (input, init) => {
     ])
   }
   if (url.hostname === 'api.anthropic.com' && url.pathname === '/v1/messages') {
-    const body = JSON.parse(String(init?.body ?? '{}'))
+    const body = await requestBody(input, init)
     note('claude-inference', { model: body.model })
     return stream([
       { type: 'message_start', message: { id: 'qa_claude', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 } } },
