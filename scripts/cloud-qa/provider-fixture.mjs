@@ -1,5 +1,5 @@
 import { appendFileSync } from 'node:fs'
-import { gunzipSync } from 'node:zlib'
+import { gunzipSync, zstdDecompressSync } from 'node:zlib'
 import { LlmRuntime } from '@deepseek-ai/dsh-llm'
 if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('This test fixture only runs in hosted CI.')
 const realFetch = globalThis.fetch
@@ -13,7 +13,10 @@ const stream = events => new Response(events.map(event => 'event: ' + event.type
 async function requestBody(input, init) {
   const raw = init?.body ?? (input instanceof Request ? await input.clone().arrayBuffer() : '{}')
   let bytes = Buffer.from(raw)
-  if (bytes[0] === 31 && bytes[1] === 139) bytes = gunzipSync(bytes)
+  const encoding = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get('content-encoding')
+  note('request-encoding', { encoding })
+  if (encoding === 'zstd') bytes = zstdDecompressSync(bytes)
+  else if (encoding === 'gzip') bytes = gunzipSync(bytes)
   return JSON.parse(bytes.toString('utf8'))
 }
 globalThis.fetch = async (input, init) => {
