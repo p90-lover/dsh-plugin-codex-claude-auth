@@ -171,17 +171,24 @@ try {
       await root.locator('[data-provider-panel="codex"]').getByRole('button', { name: 'Use account', exact: true }).click()
       await poll(codex, value => value.body.accounts.find(a => a.id === first)?.active)
     })
-    await check('Native quota display and account model/effort/reset preferences', async () => {
+    await check('Native quota display and account model/reset preferences', async () => {
       await tab(0)
       const panel = root.locator('[data-provider-panel="codex"]')
       await panel.getByText('82%', { exact: true }).first().waitFor()
       await panel.getByText('Advanced settings for this account', { exact: true }).first().click()
-      await panel.getByLabel('Fallback model', { exact: true }).first().selectOption('gpt-cloud-qa')
+      await panel.getByRole('combobox', { name: /^Fallback model/ }).first().selectOption('gpt-cloud-qa')
       await poll(codex, value => value.body.accounts[0].failoverModel === 'gpt-cloud-qa')
-      await panel.getByLabel('Fallback reasoning effort', { exact: true }).first().selectOption('high')
-      await poll(codex, value => value.body.accounts[0].failoverEffort === 'high')
-      await panel.getByRole('checkbox', { name: /Automatically redeem/ }).first().check()
+      await panel.getByRole('checkbox', { name: /Automatically redeem/ }).first().click()
       await poll(codex, value => value.body.accounts[0].useResetCredit)
+    })
+    await check('Native account reasoning metadata and effort save', async () => {
+      const before = (await codex()).body
+      const account = before.accounts[0]
+      const selected = before.failover.providers.find(p => p.id === 'openai-codex-oauth')
+      const response = await api('openai-codex-oauth', '/account/failover-effort', { accountId: account.id, effortId: 'high' })
+      report.reasoningEvidence = { advertisedUpstream: ['low', 'high'], nativeCatalog: selected, attemptedEffort: 'high', response }
+      assert.equal(response.status, 200, 'Host rejects an effort advertised by the provider fixture')
+      assert.ok(selected.models[0].efforts.length > 0)
     })
     await check('Native context presets/custom validation and saved readback', async () => {
       await tab(1)
@@ -230,11 +237,12 @@ try {
   if (signedClaude) await check('Native provider fallback enable/model/effort persistence', async () => {
     await tab(3)
     const card = root.locator('article').filter({ has: page.getByRole('heading', { name: 'Anthropic Claude (OAuth)', exact: true }) })
-    await card.getByRole('checkbox', { name: 'Allow this destination', exact: true }).check()
+    await card.getByRole('checkbox', { name: 'Allow this destination', exact: true }).click()
     await poll(codex, value => value.body.failover.providers.find(p => p.id === 'anthropic-oauth')?.enabled)
-    await card.getByLabel('Destination model', { exact: true }).selectOption('claude-sonnet-cloud-qa')
+    await card.getByRole('combobox', { name: /^Destination model/ }).selectOption('claude-sonnet-cloud-qa')
     await poll(codex, value => value.body.failover.providers.find(p => p.id === 'anthropic-oauth')?.model === 'claude-sonnet-cloud-qa')
-    await card.getByLabel('Reasoning effort', { exact: true }).selectOption('high')
+    assert.equal(await card.getByRole('combobox', { name: /^Reasoning effort/ }).isEnabled(), true, 'Native reasoning effort control is disabled')
+    await card.getByRole('combobox', { name: /^Reasoning effort/ }).selectOption('high')
     await poll(codex, value => value.body.failover.providers.find(p => p.id === 'anthropic-oauth')?.effort === 'high')
   })
   await check('Diagnostics export contains state but excludes credential/proxy secrets', async () => {
@@ -265,6 +273,12 @@ try {
   await page.keyboard.press('Escape')
   await writeFile(join(output, 'chat-controls.json'), JSON.stringify(await page.locator('button,input,textarea,[contenteditable=true]').evaluateAll(nodes => nodes.filter(n => n.getClientRects().length).map(n => ({ tag: n.tagName, role: n.getAttribute('role'), label: n.getAttribute('aria-label'), placeholder: n.getAttribute('placeholder'), text: n.textContent?.trim().slice(0, 150) }))), null, 2))
   await capture('native-chat-after-settings')
+  if (await page.getByRole('button', { name: 'Choose workspace', exact: true }).isVisible().catch(() => false)) {
+    await page.getByRole('button', { name: 'Choose workspace', exact: true }).click()
+    await capture('native-workspace-picker')
+    await writeFile(join(output, 'workspace-picker.txt'), await page.locator('body').innerText())
+    await writeFile(join(output, 'workspace-picker-controls.json'), JSON.stringify(await page.locator('button,input').evaluateAll(nodes => nodes.filter(n => n.getClientRects().length).map(n => ({ tag: n.tagName, role: n.getAttribute('role'), label: n.getAttribute('aria-label'), placeholder: n.getAttribute('placeholder'), text: n.textContent?.trim().slice(0, 150) }))), null, 2))
+  }
   await check('No uncaught browser application errors', async () => assert.deepEqual(report.pageErrors, []))
 } catch (error) {
   report.checks.push({ name: 'Cloud native DSH setup', status: 'fail', error: clean(error.stack ?? error) })

@@ -1,9 +1,11 @@
 import { appendFileSync } from 'node:fs'
+import { LlmRuntime } from '@deepseek-ai/dsh-llm'
 if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('This test fixture only runs in hosted CI.')
 const realFetch = globalThis.fetch
 const log = process.env.QA_WIRE_LOG
 let codexAccount = 0, claudeAccount = 0
 const note = (kind, extra = {}) => { if (log) appendFileSync(log, JSON.stringify({ kind, ...extra }) + '\n') }
+note('native-llm-contract', { resolveModel: typeof LlmRuntime.prototype.resolveModel, resolveModelInfo: typeof LlmRuntime.prototype.resolveModelInfo })
 const json = value => Response.json(value)
 const jwt = value => Buffer.from('{}').toString('base64url') + '.' + Buffer.from(JSON.stringify(value)).toString('base64url') + '.qa-signature'
 const stream = events => new Response(events.map(event => 'data: ' + JSON.stringify(event) + '\n\n').join(''), { headers: { 'content-type': 'text/event-stream' } })
