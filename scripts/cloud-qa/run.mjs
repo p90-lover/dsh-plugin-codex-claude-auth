@@ -81,8 +81,17 @@ async function login(provider, count) {
   await link.waitFor()
   const state = new URL(await link.getAttribute('href')).searchParams.get('state')
   assert.ok(state)
-  await panel.getByRole('textbox', { name: 'Complete login in your browser, or paste the authorization code / redirect URL here:', exact: true }).fill('cloud-qa-code#' + state)
-  await panel.getByRole('button', { name: 'Submit and continue', exact: true }).click()
+  if (provider === 'codex' && count === 1) {
+    await panel.getByRole('textbox', { name: 'Complete login in your browser, or paste the authorization code / redirect URL here:', exact: true }).fill('cloud-qa-code#' + state)
+    await panel.getByRole('button', { name: 'Submit and continue', exact: true }).click()
+  } else {
+    const callback = new URL(new URL(await link.getAttribute('href')).searchParams.get('redirect_uri'))
+    assert.ok(['localhost', '127.0.0.1'].includes(callback.hostname))
+    callback.hostname = '127.0.0.1'
+    callback.searchParams.set('code', 'cloud-qa-code')
+    callback.searchParams.set('state', state)
+    assert.equal((await fetch(callback)).status, 200)
+  }
   await panel.getByText('Sign-in credentials saved.', { exact: true }).waitFor()
   await panel.getByRole('button', { name: 'Done', exact: true }).click()
   const status = await poll(provider === 'codex' ? codex : claude, value => value.body.connected && value.body.accounts.length === count)
@@ -147,6 +156,20 @@ try {
   await page.goto(url)
   await page.getByRole('button', { name: /^(Continue|继续|繼續)$/ }).click()
   await page.getByRole('button', { name: /^(Configure later|稍后配置|稍後設定)$/ }).click()
+  const workspaceReady = await check('Choose an isolated cloud workspace in native DSH', async () => {
+    if (await page.getByRole('button', { name: 'Choose workspace', exact: true }).isVisible().catch(() => false)) {
+      const workspace = resolve('aiTemp/chat-workspace')
+      await mkdir(workspace, { recursive: true })
+      await page.getByRole('button', { name: 'Choose workspace', exact: true }).click()
+      await page.getByRole('button', { name: 'Edit path', exact: true }).click()
+      const path = page.locator('input:visible').last()
+      await path.fill(workspace)
+      await path.press('Enter')
+      await page.getByRole('button', { name: 'Open', exact: true }).click()
+    }
+    await page.locator('textarea:visible,[contenteditable="true"]:visible').last().waitFor()
+    await capture('native-workspace-ready')
+  })
   await openSettings()
   await check('Native authentication and disconnected context guards', async () => {
     assert.equal((await fetch('http://127.0.0.1:3097/plugins/dsh-oauth-model-providers/oauth/openai-codex-oauth/status')).status, 401)
@@ -273,23 +296,11 @@ try {
   await page.keyboard.press('Escape')
   await writeFile(join(output, 'chat-controls.json'), JSON.stringify(await page.locator('button,input,textarea,[contenteditable=true]').evaluateAll(nodes => nodes.filter(n => n.getClientRects().length).map(n => ({ tag: n.tagName, role: n.getAttribute('role'), label: n.getAttribute('aria-label'), placeholder: n.getAttribute('placeholder'), text: n.textContent?.trim().slice(0, 150) }))), null, 2))
   await capture('native-chat-after-settings')
-  const workspaceReady = await check('Choose an isolated cloud workspace in native DSH', async () => {
-    if (await page.getByRole('button', { name: 'Choose workspace', exact: true }).isVisible().catch(() => false)) {
-      const workspace = resolve('aiTemp/chat-workspace')
-      await mkdir(workspace, { recursive: true })
-      await page.getByRole('button', { name: 'Choose workspace', exact: true }).click()
-      await page.getByRole('button', { name: 'Edit path', exact: true }).click()
-      const path = page.locator('input:visible').last()
-      await path.fill(workspace)
-      await path.press('Enter')
-      await page.getByRole('button', { name: 'Open', exact: true }).click()
-    }
-    await page.locator('textarea:visible,[contenteditable="true"]:visible').last().waitFor()
-    await capture('native-workspace-ready')
-  })
+  let codexChat = false
   if (workspaceReady && signedCodex) {
-    await check('Native model picker, composer context and Codex request/response', async () => {
+    codexChat = await check('Native model picker, composer context and Codex request/response', async () => {
       await page.getByRole('button', { name: /DeepSeek-V41-Flash|DeepSeek-V4-Pro|Select model/ }).last().click()
+      await page.getByText('Model', { exact: true }).click()
       await page.getByText('Cloud QA Codex', { exact: true }).click()
       await page.locator('[data-active-provider="codex"]').waitFor()
       await page.getByRole('button', { name: 'Manage OpenAI context', exact: true }).waitFor()
@@ -299,7 +310,7 @@ try {
       await page.getByText('CLOUD_QA_RESPONSE_OK', { exact: true }).waitFor()
       await capture('native-codex-response')
     })
-    await check('Native Code review command queues a model turn', async () => {
+    if (codexChat) await check('Native Code review command queues a model turn', async () => {
       await page.getByRole('button', { name: 'Start review', exact: true }).click()
       await page.getByText(/Code review started for/).first().waitFor()
       await poll(() => page.getByText('CLOUD_QA_RESPONSE_OK', { exact: true }).count(), count => count >= 2)
@@ -307,7 +318,9 @@ try {
     })
   }
   if (workspaceReady && signedClaude) await check('Native Claude model switch and request/response', async () => {
-    await page.getByRole('button', { name: /Cloud QA Codex/ }).last().click()
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: /Cloud QA Codex|DeepSeek-V41-Flash|DeepSeek-V4-Pro/ }).last().click()
+    await page.getByText('Model', { exact: true }).click()
     await page.getByText('Cloud QA Claude', { exact: true }).click()
     await page.locator('[data-active-provider="claude"]').waitFor()
     assert.equal(await page.getByRole('button', { name: 'Manage OpenAI context', exact: true }).count(), 0)
