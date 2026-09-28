@@ -9,7 +9,7 @@ import { LlmError } from '@deepseek-ai/dsh-llm'
 import type { DirectoryRegistrationHandle, LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import type { OAuthProviderConfig, OAuthProviderDefaults } from './config.ts'
 import { resolveOAuthProviderConfig } from './config.ts'
@@ -93,13 +93,9 @@ export function applyOAuthProvider(
     config.sharedProxyCredentialRef,
     spec.authProviderId,
   )
+  const discovered = autoModelProvider(baseProvider, spec.modelCatalog, undefined, () => contextWindow?.value)
   const provider = proxyAwareProvider(
-    openAiRemoteCompactionProvider(autoModelProvider(
-      baseProvider,
-      spec.modelCatalog,
-      undefined,
-      () => contextWindow?.value,
-    )),
+    openAiRemoteCompactionProvider(discovered),
     () => proxy.value,
   )
   const authModels: MutableModels = createModels({ credentials: store })
@@ -119,16 +115,32 @@ export function applyOAuthProvider(
     retryPolicy: config.retryPolicy,
     piProvider: routeProvider,
     configuredMaxTokens: new Map(),
+    ...{ modelErrors: new Map<string, string>() },
+    maxRequestImageBytes: 20 * 1024 * 1024,
+    requestImagePixelBudget: 2048 * 2048,
+    requestImageMaxBytes: 1024 * 1024,
     ...config.transport === undefined ? {} : { transport: config.transport },
     ...config.timeoutMs === undefined ? {} : { timeoutMs: config.timeoutMs },
     ...config.websocketConnectTimeoutMs === undefined
       ? {}
       : { websocketConnectTimeoutMs: config.websocketConnectTimeoutMs },
   }
-  const profiles = new Map([[config.route, profile]])
+  const snapshotProfiles = (): Map<string, ResolvedPiAiProviderProfile> => {
+    const snapshot = provider.getModels().map(model => ({ ...model }))
+    return new Map([[config.route, {
+      ...profile,
+      piProvider: routedProvider({ ...provider, getModels: () => snapshot }, config.route, config.displayName),
+    }]])
+  }
+  let profiles = snapshotProfiles()
   const baseAdapter = new ReplayCompatibleAdapter(
     new PiAiAdapter({
       profiles: () => profiles,
+      auth: {
+        credentials: store,
+        // OAuth is explicit here. Never substitute an ambient account or API key.
+        authContext: { env: async () => undefined, fileExists: async () => false },
+      },
       resolveApiKey: async () => accessToken(
         (await authModels.getAuth(spec.authProviderId))?.auth,
         config.displayName,
@@ -180,17 +192,14 @@ export function applyOAuthProvider(
 
   const registration = ctx.llm.registerAdapter([config.route], adapter)
   registration.replace([])
-  const settingsNs = settingsNamespace(`oauth-model-provider-${config.route}`)
+  const settingsNs = `oauth-model-provider-${config.route}`
   const directoryEntry: LlmConfigurableProvider = {
     provider: config.route,
     displayName: config.displayName,
     settingsNs,
     settingsPath: [],
   }
-  installSettingsSection(ctx, settingsNs, DIRECTORY_SETTINGS_SCHEMA, {}, {
-    setSource: () => undefined,
-    onChange: () => undefined,
-  })
+  let directorySupported = false
 
   let availabilityRevision = 0
   let routeAvailable = false
@@ -198,30 +207,51 @@ export function applyOAuthProvider(
   let directory: DirectoryRegistrationHandle | undefined
   const setAvailable = (available: boolean): void => {
     failover.adapter.setAvailable(config.route, available)
-    if (routeAvailable === available && directoryAvailable === available) return
+    const showDirectory = available && directorySupported
+    if (routeAvailable === available && directoryAvailable === showDirectory) return
     availabilityRevision += 1
     if (routeAvailable !== available) {
       registration.replace(available ? [config.route] : [])
       routeAvailable = available
     }
-    if (directoryAvailable === available) return
+    if (directoryAvailable === showDirectory) return
     try {
       if (directory === undefined) {
-        if (!available) return
+        if (!showDirectory) return
         directory = ctx.llm.registerConfigurableProviders([directoryEntry])
       } else {
-        directory.replace(available ? [directoryEntry] : [])
+        directory.replace(showDirectory ? [directoryEntry] : [])
       }
-      directoryAvailable = available
+      directoryAvailable = showDirectory
     } catch (error) {
-      ctx.logger.warn(`oauth-model-provider: could not ${available ? 'publish' : 'hide'} ${config.displayName} in the Models provider directory`)
+      ctx.logger.warn(`oauth-model-provider: could not ${showDirectory ? 'publish' : 'hide'} ${config.displayName} in the Models provider directory`)
       ctx.logger.warn(error)
     }
   }
 
-  const catalogFingerprint = async (): Promise<string> => JSON.stringify(
-    await adapter.listModels(config.route),
-  )
+  ctx.inject(['settings'], settingsCtx => {
+    const settings = settingsCtx.settings as unknown as {
+      installSection?: (owner: Context, ns: string, schema: typeof DIRECTORY_SETTINGS_SCHEMA, source: object,
+        hooks: { setSource(): void; onChange(): void }) => void
+      configure?: (presentation: { auto: boolean }, owner: Context['fiber']) => () => void
+    }
+    settingsCtx.effect(() => {
+      if (settings.installSection !== undefined) {
+        settings.installSection(ctx, settingsNs, DIRECTORY_SETTINGS_SCHEMA, {}, {
+          setSource: () => undefined,
+          onChange: () => undefined,
+        })
+        directorySupported = true
+        setAvailable(routeAvailable)
+        return () => { directorySupported = false; setAvailable(routeAvailable) }
+      }
+      // Current hosts derive forms from live Config fields. OAuth settings live
+      // in the control center, so no synthetic generic Models row is registered.
+      return settings.configure?.({ auto: false }, ctx.fiber) ?? (() => {})
+    })
+  })
+
+  const catalogFingerprint = async (): Promise<string> => JSON.stringify(provider.getModels())
 
   let refreshingModels: Promise<void> | undefined
   const refreshModels = (force = false): Promise<void> => {
@@ -230,6 +260,7 @@ export function applyOAuthProvider(
       try {
         const before = routeAvailable ? await catalogFingerprint() : undefined
         const result = await authModels.refresh({ allowNetwork: true, force })
+        profiles = snapshotProfiles()
         const error = result.errors.get(spec.authProviderId)
         if (error !== undefined) {
           ctx.logger.warn(
@@ -266,6 +297,7 @@ export function applyOAuthProvider(
       proxy.setActiveAccountProxyId(accounts.find(account => account.active)?.proxyId)
       await authModels.refresh({ allowNetwork: false, force: false })
       if (!live || availabilityRevision !== bootstrapRevision) return
+      profiles = snapshotProfiles()
       setAvailable(true)
       await refreshModels()
     }, (error) => {
@@ -276,7 +308,7 @@ export function applyOAuthProvider(
     return () => { live = false }
   }, `oauth-model-provider: initial ${config.route} credential/proxy state`)
 
-  ctx.on('credentials/updated', (ref) => {
+  ctx.on('credentials/reference-updated', (ref) => {
     if (ref === config.proxyCredentialRef || ref === config.sharedProxyCredentialRef) {
       void proxy.refresh().then(
         () => routeAvailable ? refreshModels(true) : undefined,
@@ -287,6 +319,7 @@ export function applyOAuthProvider(
       return
     }
     if (ref !== config.credentialRef) return
+    usage.invalidate()
     void Promise.all([store.read(spec.authProviderId), store.accounts(spec.authProviderId)]).then(
       async ([stored, accounts]) => {
         const available = stored?.type === 'oauth'
@@ -295,7 +328,9 @@ export function applyOAuthProvider(
           setAvailable(false)
           return
         }
+        await contextWindow?.load()
         await authModels.refresh({ allowNetwork: false, force: false })
+        profiles = snapshotProfiles()
         setAvailable(true)
         await refreshModels(true)
       },
@@ -319,11 +354,13 @@ export function applyOAuthProvider(
     contextWindow,
     async () => {
       await authModels.refresh({ allowNetwork: false, force: true })
+      profiles = snapshotProfiles()
       if (routeAvailable) registration.replace([config.route])
     },
     failover.preferences,
     ctx.llm,
     () => failover.adapter.availableRoutes(),
+    () => Object.fromEntries(discovered.nativeModels().map(model => [model.id, model.contextWindow])),
   )
 
   installOAuthCommands(

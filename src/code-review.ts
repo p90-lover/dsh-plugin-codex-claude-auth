@@ -1,11 +1,22 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { lstat, realpath, open } from 'node:fs/promises'
+import { constants } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-commands'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dsh-oauth-code-review': {
+      kind: 'dsh-oauth-code-review'
+      form: 'notice'
+      summary: string
+    }
+  }
+}
 
 const execFileAsync = promisify(execFile)
 const REVISION_PATTERN = /^[A-Za-z0-9._/@{}~^:+-]+$/u
@@ -118,7 +129,7 @@ async function assertGitRepository(cwd: string, signal: AbortSignal): Promise<st
   }
 }
 
-async function workingTreeFingerprint(root: string, signal: AbortSignal): Promise<string | undefined> {
+export async function workingTreeFingerprint(root: string, signal: AbortSignal): Promise<string | undefined> {
   const status = await gitOutput(root, ['status', '--porcelain=v1', '--untracked-files=all'], signal)
   if (status.trim().length === 0) return undefined
 
@@ -128,13 +139,34 @@ async function workingTreeFingerprint(root: string, signal: AbortSignal): Promis
   ])
   const hash = createHash('sha256').update(status).update('\0').update(diff)
   const untracked = untrackedOutput.split('\0').filter(Boolean).sort()
+  const realRoot = await realpath(root)
+  let budget = 8 * 1024 * 1024
   for (const name of untracked) {
     const path = resolve(root, name)
     const local = relative(root, path)
     if (local.startsWith('..') || isAbsolute(local)) continue
     hash.update('\0').update(name).update('\0')
     try {
-      hash.update(await readFile(path))
+      const stat = await lstat(path)
+      if (!stat.isFile() || stat.isSymbolicLink()) { hash.update('<non-regular>'); continue }
+      const resolved = await realpath(path)
+      const within = relative(realRoot, resolved)
+      if (within.startsWith('..') || isAbsolute(within)) { hash.update('<outside>'); continue }
+      if (stat.size > 1024 * 1024 || stat.size > budget) {
+        hash.update(`large:${stat.size}:${stat.mtimeMs}`)
+        continue
+      }
+      const handle = await open(resolved, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+      try {
+        const opened = await handle.stat()
+        if (!opened.isFile() || opened.ino !== stat.ino || opened.size !== stat.size) {
+          hash.update('<changed-during-read>'); continue
+        }
+        const buffer = Buffer.alloc(opened.size)
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+        hash.update(buffer.subarray(0, bytesRead))
+        budget -= bytesRead
+      } finally { await handle.close() }
     } catch {
       hash.update('<unreadable>')
     }
@@ -192,8 +224,7 @@ export function installCodeReview(ctx: Context): void {
         agent.followup(createUserMessage({
           content: [{ type: 'text', text: buildReviewPrompt(scope, root) }],
           source: {
-            kind: 'plugin',
-            plugin: 'dsh-oauth-model-providers',
+            kind: 'dsh-oauth-code-review',
             form: 'notice',
             summary: `Read-only code review requested: ${scopeLabel(scope)}`,
           },

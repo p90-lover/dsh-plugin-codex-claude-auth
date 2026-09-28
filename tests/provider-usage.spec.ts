@@ -42,3 +42,12 @@ describe('provider usage helpers', () => {
     expect(contextControlValue(777_000, options, false)).toBe('custom')
   })
 })
+
+it('recognizes the current DSH provider metadata before legacy provenance', () => {
+  expect(latestProviderFromNodes([
+    { kind: 'assistant', providerMetadata: { provider: 'openai-codex-oauth' } },
+  ])).toBe('codex')
+  expect(latestProviderFromNodes([
+    { kind: 'assistant', providerMetadata: { provider: 'anthropic-oauth' }, provenance: { provider: 'openai-codex-oauth' } },
+  ])).toBe('claude')
+})

@@ -4,7 +4,8 @@ import type {
   LlmModelInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
-  Message,
+  PreparedAdapterCall,
+  LlmImageRequestPricing,
   ResolvedRetryPolicy,
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
@@ -48,12 +49,12 @@ export function withHighestReasoningDefault(info: LlmResolvedModelInfo): LlmReso
 
 /** Repair replay metadata written by releases before routed stream identity was normalized. */
 export function repairLegacyReplayMessages(
-  messages: Message[],
+  messages: GenerateOptions['messages'],
   route: string,
   upstreamProvider: string,
-): Message[] {
+): GenerateOptions['messages'] {
   let changed = false
-  const repaired = messages.map((message): Message => {
+  const repaired = messages.map((message): GenerateOptions['messages'][number] => {
     if (message.role !== 'assistant' || message.source.kind !== 'model') return message
     const state = record(message.source.replayState)
     if (state?.kind !== 'pi-ai'
@@ -102,6 +103,21 @@ export class ReplayCompatibleAdapter extends LlmAdapter {
     signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
     return this.delegate.resolveModel(provider, model, signal).then(withHighestReasoningDefault)
+  }
+
+  override imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined {
+    return this.delegate.imageRequestPricing(provider, model)
+  }
+
+  override async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    const prepared = await this.delegate.prepareCall(provider, model, signal)
+    return {
+      model: withHighestReasoningDefault(prepared.model),
+      stream: options => prepared.stream({
+        ...options,
+        messages: repairLegacyReplayMessages(options.messages, this.route, this.upstreamProvider),
+      }),
+    }
   }
 
   override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {

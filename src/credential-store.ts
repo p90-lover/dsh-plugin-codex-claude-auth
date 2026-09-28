@@ -403,7 +403,10 @@ export class HarnessOAuthCredentialStore implements CredentialStore {
     if (resolved === undefined) return availableModels[Math.floor(availableModels.length / 2)]
     const bundle = parseStoredValue(resolved.value, providerId, ref)
     const active = bundle.accounts.find(account => account.id === bundle.activeAccountId)
-    const selected = active?.failoverModel ?? providerDefault ?? bundle.failoverDefaultModel
+    const accountModel = active?.failoverModel
+    const selected = accountModel !== undefined && availableModels.includes(accountModel)
+      ? accountModel
+      : providerDefault ?? bundle.failoverDefaultModel
     return selected !== undefined && availableModels.includes(selected)
       ? selected
       : availableModels[Math.floor(availableModels.length / 2)]

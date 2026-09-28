@@ -90,9 +90,20 @@ describe('HarnessOAuthCredentialStore', () => {
     expect((await store.accounts('openai-codex')).find(account => account.id === accounts[0]!.id)?.proxyId).toBeUndefined()
   })
 
+  it('inherits the provider model when the saved account override was removed', async () => {
+    const store = new HarnessOAuthCredentialStore(memoryBackend(), new Map([['openai-codex', ref('TEST_OAUTH')]]))
+    await store.modify('openai-codex', async () => ({
+      type: 'oauth', access: 'fake-access', refresh: 'fake-refresh', expires: 1,
+    }))
+    const account = (await store.accounts('openai-codex'))[0]!
+    await store.setAccountFailoverModel('openai-codex', account.id, 'removed-model')
+    expect(await store.resolveActiveFailoverModel('openai-codex',
+      ['preferred-model', 'middle-model', 'last-model'], 'preferred-model')).toBe('preferred-model')
+  })
+
   it('parses Claude live usage into separate 5-hour and weekly windows', () => {
     const usage = claudeUsage({
-      five_hour: { utilization: 0.3, resets_at: '2030-01-01T01:00:00.000Z' },
+      five_hour: { utilization: 30, resets_at: '2030-01-01T01:00:00.000Z' },
       seven_day: { utilization: 60, resets_at: '2030-01-07T01:00:00.000Z' },
     })
     expect(usage).toMatchObject({

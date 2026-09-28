@@ -13,7 +13,7 @@ export function latestProviderFromNodes(nodes: readonly unknown[]): ComposerProv
     if (typeof node !== 'object' || node === null || Array.isArray(node)) continue
     const record = node as Record<string, unknown>
     if (record.kind !== 'assistant') continue
-    const provenance = record.provenance
+    const provenance = record.providerMetadata ?? record.provenance
     if (typeof provenance !== 'object' || provenance === null || Array.isArray(provenance)) continue
     const provider = (provenance as Record<string, unknown>).provider
     if (typeof provider !== 'string') continue
@@ -23,12 +23,13 @@ export function latestProviderFromNodes(nodes: readonly unknown[]): ComposerProv
   return undefined
 }
 
-export function remainingPercent(remaining: number | undefined, used: number | undefined): number {
+export function remainingPercent(remaining: number | undefined, used: number | undefined): number | undefined {
   const candidate = Number.isFinite(remaining)
     ? remaining!
     : Number.isFinite(used)
       ? 100 - used!
-      : 100
+      : undefined
+  if (candidate === undefined) return undefined
   return Math.round(Math.max(0, Math.min(100, candidate)))
 }
 

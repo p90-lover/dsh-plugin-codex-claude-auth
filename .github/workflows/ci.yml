@@ -1,56 +1,125 @@
-name: CI
-
+name: Verify plugin
 on:
   push:
-    branches:
-      - main
+    branches: [main, feat/harness-compat-control-center]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
-
+  schedule:
+    - cron: '17 4 * * 1'
 permissions:
   contents: read
-
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: verify-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   check:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: [0.1.2-rc.1, 0.1.3-alpha.2, 0.1.7-rc.2]
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v4
         with:
-          version: 10
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.1
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
-
-      - name: Install dependencies
+      - name: Install reproducible baseline dependencies
+        if: matrix.dsh == '0.1.7-rc.2'
         run: pnpm install --frozen-lockfile
-
-      - name: Run typecheck, tests, and production build
-        run: pnpm run check
-
-      - name: Check repository diff
-        run: git diff --check
-
-      - name: Pack plugin
+      - name: Install independently resolved additional Harness
+        if: matrix.dsh != '0.1.7-rc.2'
         run: |
-          mkdir -p artifacts
-          pnpm pack --pack-destination artifacts
-          sha256sum artifacts/*.tgz | tee artifacts/SHA256SUMS
-
-      - name: Upload packed plugin
-        uses: actions/upload-artifact@v4
+          node scripts/use-harness.mjs '${{ matrix.dsh }}'
+          mkdir -p aiTemp
+          mv pnpm-lock.yaml aiTemp/pnpm-lock.baseline.yaml
+          pnpm install --no-frozen-lockfile
+      - name: Typecheck, all regression tests, clean production build
+        run: pnpm run check
+      - name: Audit the plugin production dependency graph
+        run: |
+          mkdir -p aiTemp/artifacts
+          pnpm audit --prod --json > aiTemp/artifacts/production-audit.json
+      - name: Prepare browser verification
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Package verified plugin
+        run: |
+          mkdir -p aiTemp/artifacts/package
+          pnpm pack --pack-destination aiTemp/artifacts/package
+          cd aiTemp/artifacts/package
+          sha256sum *.tgz > SHA256SUMS
+      - name: Test rendered controls and installed release package
+        run: |
+          export QA_PLUGIN_PACKAGE="aiTemp/artifacts/package/dsh-oauth-model-providers-$(node -p 'require("./package.json").version').tgz"
+          pnpm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: dsh-oauth-model-providers
-          path: artifacts/
+          name: verification-${{ matrix.dsh }}
+          path: aiTemp/artifacts/
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: success() && matrix.dsh == '0.1.7-rc.2'
+        with:
+          name: release-package
+          path: aiTemp/artifacts/package/
+          if-no-files-found: error
+  upstream-canary:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check upstream master and published-version drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/upstream-canary.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upstream-canary
+          path: aiTemp/artifacts/upstream-canary.json
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-package
+          path: aiTemp/release-assets
+      - name: Publish verified versioned package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p 'JSON.parse(require("fs").readFileSync("package.json","utf8")).version')"
+          test "$GITHUB_REF_NAME" = "v$version"
+          (cd aiTemp/release-assets && sha256sum -c SHA256SUMS)
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to overwrite a published release.'
+            exit 1
+          fi
+          gh release create "v$version" aiTemp/release-assets/* --target "$GITHUB_SHA" --title "v$version · 模型與帳號控制中心" --notes-file CHANGELOG.md --latest

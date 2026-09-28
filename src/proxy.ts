@@ -7,7 +7,7 @@ import type { Dispatcher } from 'undici'
 import type { HarnessCredentialBackend } from './credential-store.ts'
 
 const PROXY_RUNTIME = Symbol.for('dsh.oauth-model-providers.proxy-runtime.v1')
-const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost'])
+const LOOPBACK = new Set(['127.0.0.1', '::1', '[::1]', 'localhost'])
 const registryChains = new Map<string, Promise<unknown>>()
 
 interface ProxyFetchInit extends RequestInit {
@@ -82,7 +82,7 @@ export function normalizeProxyUrl(value: string): string {
 /** Render a proxy target without ever returning embedded credentials. */
 export function proxyDisplayName(value: string): string {
   const parsed = new URL(value)
-  const host = parsed.hostname.includes(':') ? `[${parsed.hostname}]` : parsed.hostname
+  const host = parsed.hostname
   return `${parsed.protocol}//${host}${parsed.port.length > 0 ? `:${parsed.port}` : ''}`
 }
 
@@ -273,8 +273,9 @@ export class ProviderProxySetting {
   }
 
   valueForAssignment(proxyId: string | undefined): string | undefined {
-    const selected = proxyId ?? this.providerProxyId
-    return this.entries.find(entry => entry.id === selected)?.url ?? this.entries[0]?.url
+    return this.entries.find(entry => entry.id === proxyId)?.url
+      ?? this.entries.find(entry => entry.id === this.providerProxyId)?.url
+      ?? this.entries[0]?.url
   }
 
   setActiveAccountProxyId(proxyId: string | undefined): void {

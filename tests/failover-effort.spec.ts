@@ -63,6 +63,7 @@ function targetModel(): LlmResolvedModelInfo {
 describe('failover reasoning effort', () => {
   it('publishes and persists a provider effort alongside model metadata', async () => {
     const preferences = new FailoverPreferences(new MemoryBackend())
+    await preferences.setProviderEnabled('target', true, ['source', 'target'])
     await preferences.setProviderEffort('target', 'high')
     expect(await preferences.effortFor('target', ['low', 'high'], 'low' as never)).toBe('high')
     expect(await preferences.effortFor('target', ['low'], 'low' as never)).toBe('low')
@@ -83,6 +84,7 @@ describe('failover reasoning effort', () => {
 
   it('applies the configured destination effort when a request fails over', async () => {
     const preferences = new FailoverPreferences(new MemoryBackend())
+    await preferences.setProviderEnabled('target', true, ['source', 'target'])
     await preferences.setProviderEffort('target', 'high')
     let captured: GenerateOptions | undefined
     const runtime: FailoverRuntime = {
