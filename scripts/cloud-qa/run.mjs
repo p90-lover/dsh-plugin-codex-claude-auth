@@ -226,7 +226,7 @@ try {
       await root.getByLabel('Custom token count', { exact: true }).fill('777000')
       await root.getByRole('button', { name: 'Apply context', exact: true }).click()
       await poll(codex, value => value.body.contextWindow.selected === 777000)
-      await page.reload()
+      await page.keyboard.press('Escape')
       await openSettings(); await tab(1)
       await root.getByText('777K', { exact: true }).first().waitFor()
     })
