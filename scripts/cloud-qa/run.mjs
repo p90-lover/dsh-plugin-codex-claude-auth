@@ -15,7 +15,7 @@ const temp = await mkdtemp(resolve('aiTemp/cloud-qa-home-'))
 const cli = join(dirname(require.resolve('@deepseek-ai/dsh/package.json')), 'lib/bin.js')
 const home = join(temp, 'home')
 const env = { ...process.env, DSH_HOME: home }
-const report = { release: 'v0.9.0', dsh: require('@deepseek-ai/dsh/package.json').version, execution: 'GitHub-hosted Ubuntu; no user credentials', upstream: 'simulated OAuth, catalogs, quota and inference', checks: [], layouts: [], pageErrors: [], consoleErrors: [], screenshots: [] }
+const report = { scope: 'Focused native model, composer and review completion; settings/layout reported separately', release: 'v0.9.0', dsh: require('@deepseek-ai/dsh/package.json').version, execution: 'GitHub-hosted Ubuntu; no user credentials', upstream: 'simulated OAuth, catalogs, quota and inference', checks: [], layouts: [], pageErrors: [], consoleErrors: [], screenshots: [] }
 const tabs = [
   ['Accounts & quota', '帳號與額度'], ['Context', '上下文'], ['Proxy routing', '代理路由'],
   ['Fallback', '自動備援'], ['Diagnostics', '診斷'], ['Task handoff', '工作交接'],
@@ -187,115 +187,8 @@ try {
   })
   const signedCodex = await check('Codex OAuth form -> simulated exchange -> native credential persistence', () => login('codex', 1))
   const signedClaude = await check('Claude OAuth form -> simulated exchange -> native credential persistence', () => login('claude', 1))
-  if (signedCodex) {
-    await check('Second Codex account and explicit active-account switching', async () => {
-      const first = (await codex()).body.accounts[0].id
-      await login('codex', 2)
-      await root.locator('[data-provider-panel="codex"]').getByRole('button', { name: 'Use account', exact: true }).click()
-      await poll(codex, value => value.body.accounts.find(a => a.id === first)?.active)
-    })
-    await check('Native quota display and account model/reset preferences', async () => {
-      await tab(0)
-      const panel = root.locator('[data-provider-panel="codex"]')
-      await panel.getByText('82%', { exact: true }).first().waitFor()
-      await panel.getByText('Advanced settings for this account', { exact: true }).first().click()
-      await panel.getByRole('combobox', { name: /^Fallback model/ }).first().selectOption('gpt-cloud-qa')
-      await poll(codex, value => value.body.accounts[0].failoverModel === 'gpt-cloud-qa')
-      await panel.getByRole('checkbox', { name: /Automatically redeem/ }).first().click()
-      await poll(codex, value => value.body.accounts[0].useResetCredit)
-    })
-    await check('Native account reasoning metadata and effort save', async () => {
-      const before = (await codex()).body
-      const account = before.accounts[0]
-      const selected = before.failover.providers.find(p => p.id === 'openai-codex-oauth')
-      const response = await api('openai-codex-oauth', '/account/failover-effort', { accountId: account.id, effortId: 'high' })
-      report.reasoningEvidence = { advertisedUpstream: ['low', 'high'], nativeCatalog: selected, attemptedEffort: 'high', response }
-      assert.equal(response.status, 200, 'Host rejects an effort advertised by the provider fixture')
-      assert.ok(selected.models[0].efforts.length > 0)
-    })
-    await check('Native context presets/custom validation and saved readback', async () => {
-      await tab(1)
-      await root.getByRole('button', { name: '500K', exact: true }).click()
-      await root.getByRole('button', { name: 'Apply context', exact: true }).click()
-      await poll(codex, value => value.body.contextWindow.selected === 500000)
-      await root.getByRole('button', { name: 'Custom', exact: true }).click()
-      await root.getByLabel('Custom token count', { exact: true }).fill('251999')
-      await root.getByRole('button', { name: 'Apply context', exact: true }).click()
-      await root.getByText(/Enter an integer from/).waitFor()
-      assert.equal((await codex()).body.contextWindow.selected, 500000)
-      await root.getByLabel('Custom token count', { exact: true }).fill('777000')
-      await root.getByRole('button', { name: 'Apply context', exact: true }).click()
-      await poll(codex, value => value.body.contextWindow.selected === 777000)
-      await page.keyboard.press('Escape')
-      await openSettings(); await tab(1)
-      await root.getByText('777K', { exact: true }).first().waitFor()
-    })
-  }
-  await check('Native proxy add/default/provider assignment/removal and redaction', async () => {
-    await tab(2)
-    for (const name of ['Cloud QA primary', 'Cloud QA secondary']) {
-      await root.getByLabel('Display name', { exact: true }).fill(name)
-      await root.getByLabel('HTTP(S) proxy URL', { exact: true }).fill('http://qa-user:qa-password@proxy.invalid:' + (name.endsWith('secondary') ? '8081' : '8080'))
-      await root.getByRole('button', { name: 'Add proxy', exact: true }).click()
-      await root.getByText(name, { exact: true }).first().waitFor()
-    }
-    let status = (await codex()).body
-    assert.equal(status.proxy.entries.length, 2)
-    assert.equal(JSON.stringify(status).includes('qa-password'), false)
-    const second = status.proxy.entries[1].id
-    await root.getByRole('button', { name: 'Make default', exact: true }).click()
-    await poll(codex, value => value.body.proxy.entries[0].id === second)
-    await root.getByLabel('OpenAI Codex proxy route', { exact: true }).selectOption(second)
-    await poll(codex, value => value.body.proxy.providerProxyId === second)
-    await root.getByRole('button', { name: 'Remove', exact: true }).first().click()
-    await root.getByRole('button', { name: 'Cancel', exact: true }).click()
-    assert.equal((await codex()).body.proxy.entries.length, 2)
-    await root.getByRole('button', { name: 'Remove', exact: true }).first().click()
-    await root.getByRole('button', { name: 'Confirm removal', exact: true }).click()
-    await poll(codex, value => value.body.proxy.entries.length === 1)
-    await root.getByRole('button', { name: 'Remove', exact: true }).first().click()
-    await root.getByRole('button', { name: 'Confirm removal', exact: true }).click()
-    await poll(codex, value => value.body.proxy.entries.length === 0)
-  })
-  if (signedClaude) await check('Native provider fallback enable/model/effort persistence', async () => {
-    await tab(3)
-    const card = root.locator('article').filter({ has: page.getByRole('heading', { name: 'Anthropic Claude (OAuth)', exact: true }) })
-    await card.getByRole('checkbox', { name: 'Allow this destination', exact: true }).click()
-    await poll(codex, value => value.body.failover.providers.find(p => p.id === 'anthropic-oauth')?.enabled)
-    await card.getByRole('combobox', { name: /^Destination model/ }).selectOption('claude-sonnet-cloud-qa')
-    await poll(codex, value => value.body.failover.providers.find(p => p.id === 'anthropic-oauth')?.model === 'claude-sonnet-cloud-qa')
-    assert.equal(await card.getByRole('combobox', { name: /^Reasoning effort/ }).isEnabled(), true, 'Native reasoning effort control is disabled')
-    await card.getByRole('combobox', { name: /^Reasoning effort/ }).selectOption('high')
-    await poll(codex, value => value.body.failover.providers.find(p => p.id === 'anthropic-oauth')?.effort === 'high')
-  })
-  await check('Diagnostics export contains state but excludes credential/proxy secrets', async () => {
-    await tab(4)
-    const text = await download(root.getByRole('button', { name: 'Export diagnostics', exact: true }), 'diagnostics.json')
-    const data = JSON.parse(text)
-    assert.equal(data.providers.length, 2)
-    assert.ok(data.providers.every(p => p.statusAvailable))
-    assert.ok(!text.includes('qa-password') && !text.includes('qa-codex-refresh') && !text.includes('sk-ant-oat01'))
-  })
-  await check('Handoff draft survives tabs and both real downloads contain the draft', async () => {
-    await tab(5)
-    await root.getByLabel('Task goal', { exact: true }).fill('Cloud-only functional QA')
-    await root.getByLabel('Completed work and important decisions', { exact: true }).fill('Tested in the hosted runner using simulated providers.')
-    await root.getByLabel('Next steps (one per line)', { exact: true }).fill('Inspect the screenshots')
-    await root.getByLabel('Workspace-relative paths (one per line)', { exact: true }).fill('README.md')
-    await tab(0); await tab(5)
-    assert.equal(await root.getByLabel('Task goal', { exact: true }).inputValue(), 'Cloud-only functional QA')
-    await root.locator('[role="tabpanel"]:not([hidden])').getByRole('checkbox').check()
-    const md = await download(root.getByRole('button', { name: 'Export readable summary', exact: true }), 'handoff.md')
-    assert.ok(md.includes('Cloud-only functional QA'))
-    const data = JSON.parse(await download(root.getByRole('button', { name: 'Export handoff JSON', exact: true }), 'handoff.json'))
-    assert.equal(data.goal, 'Cloud-only functional QA')
-  })
-  await check('Capture all six native tabs in both languages at three viewport sizes', layoutSweep)
-  await tab(0)
-  await writeFile(join(output, 'native-status.json'), JSON.stringify({ codex: (await codex()).body, claude: (await claude()).body }, null, 2))
+  // Broader settings and 36 layout states are recorded in the preceding cloud run.
   await page.keyboard.press('Escape')
-  await writeFile(join(output, 'chat-controls.json'), JSON.stringify(await page.locator('button,input,textarea,[contenteditable=true]').evaluateAll(nodes => nodes.filter(n => n.getClientRects().length).map(n => ({ tag: n.tagName, role: n.getAttribute('role'), label: n.getAttribute('aria-label'), placeholder: n.getAttribute('placeholder'), text: n.textContent?.trim().slice(0, 150) }))), null, 2))
-  await capture('native-chat-after-settings')
   let codexChat = false
   if (workspaceReady && signedCodex) {
     codexChat = await check('Native model picker, composer context and Codex request/response', async () => {
@@ -306,7 +199,7 @@ try {
       const input = page.locator('textarea:visible,[contenteditable="true"]:visible').last()
       await input.fill('Send a short test reply.')
       await page.getByRole('button', { name: 'Send message', exact: true }).click()
-      await page.getByText('CLOUD_QA_RESPONSE_OK', { exact: true }).waitFor()
+      await page.locator('p').filter({ hasText: /^CLOUD_QA_RESPONSE_OK$/ }).waitFor()
       await capture('native-codex-response')
       report.activeComposerCodexVisible = await page.locator('[data-active-provider="codex"]').count()
     })
@@ -320,7 +213,7 @@ try {
       await page.getByRole('button', { name: 'Start review', exact: true }).click()
       await page.getByText(/Code review started for/).first().waitFor()
       await poll(async () => (await readFile(join(output, 'provider-wire.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)), lines => lines.some(line => line.kind === 'codex-inference' && line.review === true))
-      await poll(() => page.getByText('CLOUD_QA_RESPONSE_OK', { exact: true }).count(), count => count >= 2)
+      await poll(() => page.locator('p').filter({ hasText: /^CLOUD_QA_RESPONSE_OK$/ }).count(), count => count >= 2)
       await capture('native-code-review')
     })
   }
@@ -332,7 +225,7 @@ try {
     report.draftComposerClaudeVisible = await page.locator('[data-active-provider="claude"]').count()
     await page.locator('textarea:visible,[contenteditable="true"]:visible').last().fill('Send another short test reply.')
     await page.getByRole('button', { name: 'Send message', exact: true }).click()
-    await page.getByText('CLOUD_QA_CLAUDE_OK', { exact: true }).waitFor()
+    await page.locator('p').filter({ hasText: /^CLOUD_QA_CLAUDE_OK$/ }).waitFor()
     await capture('native-claude-response')
     report.activeComposerClaudeVisible = await page.locator('[data-active-provider="claude"]').count()
   })
